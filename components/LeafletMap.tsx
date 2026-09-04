@@ -20,7 +20,6 @@ import {
 } from "@/lib/map-icons";
 import { useTheme } from "@/components/ThemeProvider";
 import { renderPopupHtml } from "@/components/MarkerPopupPreview";
-import DarkVectorMap from "@/components/DarkVectorMap";
 
 /* ── Subcomponent: syncs map view with parent state ── */
 function MapController({
@@ -148,23 +147,6 @@ export default function LeafletMap({
         <span className="text-muted-foreground text-sm">
           Initializing Map...
         </span>
-      </div>
-    );
-  }
-
-  if (theme === "dark") {
-    return (
-      <div className="h-full w-full relative overflow-hidden">
-        <DarkVectorMap
-          center={center as [number, number]}
-          zoom={zoom}
-          bhandaras={bhandaras}
-          userLocation={userLocation}
-          onMarkerClick={onMarkerClick}
-          onMarkerHover={onMarkerHover}
-          hoveredId={hoveredId}
-          selectedId={selectedId}
-        />
       </div>
     );
   }

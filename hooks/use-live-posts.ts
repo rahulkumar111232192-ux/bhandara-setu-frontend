@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import type { Bhandara } from "@/lib/types";
+import { apiFetch } from "@/lib/api";
 
 type PostEvent = { id: number } & Partial<Bhandara>;
 
@@ -13,7 +14,8 @@ interface UseLivePostsReturn {
   addPost: (post: Bhandara) => void;
 }
 
-const SSE_URL = "/api/events/stream";
+const API_URL = process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "");
+const SSE_URL = `${API_URL || ""}/api/events/stream`;
 const RECONNECT_DELAY_MS = 3000;
 
 /**
@@ -54,7 +56,7 @@ export function useLivePosts(view: string = "live"): UseLivePostsReturn {
         // If we don't have cached data, show initial loading state
         if (posts.length === 0) setLoading(true);
 
-        const res = await fetch(`/api/posts?view=${view}`, { credentials: "include" });
+        const res = await apiFetch(`/api/posts?view=${view}`);
         const data = await res.json();
         if (!cancelled && data.status === 200 && Array.isArray(data.data)) {
           setPosts(data.data);

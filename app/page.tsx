@@ -85,7 +85,7 @@ export default function Home() {
       setMapConfig({ center: [found.latitude, found.longitude], zoom: 15 });
     } else {
       // Fetch single post directly
-      fetch(`/api/posts/${postId}`)
+      apiFetch(`/api/posts/${postId}`)
         .then((res) => res.json())
         .then((data) => {
           if (data.status === 200 && data.data) {
@@ -165,7 +165,8 @@ export default function Home() {
     }
 
     // SSE listener for nearby food distribution broadcasts
-    const es = new EventSource("/api/events/stream");
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "");
+    const es = new EventSource(`${apiUrl || ""}/api/events/stream`);
     es.addEventListener("notification:nearby", (e) => {
       try {
         const payload = JSON.parse(e.data);
