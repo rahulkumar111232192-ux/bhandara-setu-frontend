@@ -4,6 +4,10 @@
 
 Bhandara Setu connects people with nearby community meals, langars, temple prasad distributions, and food relief events across India in real-time. Built with Next.js 15, Tailwind CSS, Leaflet, and MapLibre GL.
 
+**Live backend:** [code-53i5.onrender.com](https://code-53i5.onrender.com)
+
+The frontend is ready to deploy to Vercel, Render, or another Next.js host. Set `NEXT_PUBLIC_API_URL` to `https://code-53i5.onrender.com` in the host's environment variables before building.
+
 ---
 
 ## ✨ Features
@@ -58,6 +62,11 @@ NEXT_PUBLIC_API_URL=http://localhost:5000
 
 # Optional custom basemap key (CARTO)
 NEXT_PUBLIC_CARTO_KEY=your_carto_key
+```
+
+For a production deployment, use:
+```env
+NEXT_PUBLIC_API_URL=https://code-53i5.onrender.com
 ```
 
 ### 4. Run Development Server
