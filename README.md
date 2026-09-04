@@ -10,6 +10,17 @@ Bhandara Setu connects people with nearby community meals, langars, temple prasa
 
 The frontend is ready to deploy to Vercel, Render, or another Next.js host. Set `NEXT_PUBLIC_API_URL` to `https://code-53i5.onrender.com` in the host's environment variables before building.
 
+### Render deployment
+
+Deploy this repository as a **Static Site** with these settings:
+
+```text
+Build Command:     npm ci && npm run build
+Publish Directory: out
+```
+
+Leave the Start Command empty. The `output: "export"` setting in `next.config.ts` generates the `out` directory; Render must not be configured to publish `build`. A matching `render.yaml` is included for Blueprint deployments. Set `NEXT_PUBLIC_API_URL` to `https://code-53i5.onrender.com` in the Render environment variables.
+
 GitHub Pages deployment is configured through GitHub Actions and runs automatically on pushes to `main`. Enable **Settings > Pages > Source: GitHub Actions** in the repository settings.
 
 ---

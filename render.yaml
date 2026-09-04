@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: bhandara-setu-frontend
+    runtime: static
+    buildCommand: npm ci && npm run build
+    staticPublishPath: ./out
+    envVars:
+      - key: NEXT_PUBLIC_API_URL
+        value: https://code-53i5.onrender.com
