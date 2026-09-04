@@ -6,7 +6,11 @@ Bhandara Setu connects people with nearby community meals, langars, temple prasa
 
 **Live backend:** [code-53i5.onrender.com](https://code-53i5.onrender.com)
 
+**Live frontend:** [rahulkumar111232192-ux.github.io/bhandara-setu-frontend](https://rahulkumar111232192-ux.github.io/bhandara-setu-frontend/)
+
 The frontend is ready to deploy to Vercel, Render, or another Next.js host. Set `NEXT_PUBLIC_API_URL` to `https://code-53i5.onrender.com` in the host's environment variables before building.
+
+GitHub Pages deployment is configured through GitHub Actions and runs automatically on pushes to `main`. Enable **Settings > Pages > Source: GitHub Actions** in the repository settings.
 
 ---
 

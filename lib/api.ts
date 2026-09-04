@@ -1,4 +1,5 @@
 ﻿export async function apiFetch(path: string, options: RequestInit = {}) {
+  const apiUrl = process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "");
   const token =
     typeof window !== "undefined"
       ? localStorage.getItem("bhandara-token")
@@ -10,7 +11,8 @@
     ...((options.headers as Record<string, string>) || {}),
   };
 
-  const res = await fetch(path, {
+  const requestUrl = apiUrl && path.startsWith("/api/") ? `${apiUrl}${path}` : path;
+  const res = await fetch(requestUrl, {
     ...options,
     credentials: "include",
     headers,
