@@ -193,3 +193,30 @@
 .leaflet-marker-icon {
   transition: transform 0.2s ease, filter 0.2s ease;
 }
+
+/* ================================================================
+   MAPLIBRE GL OVERRIDES (Amber-Orange Dark Vector Map)
+   ================================================================ */
+.maplibregl-popup-content {
+  background: transparent !important;
+  box-shadow: none !important;
+  border-radius: 0 !important;
+  padding: 0 !important;
+}
+.maplibregl-popup-tip {
+  display: none !important;
+}
+.maplibregl-popup-close-button {
+  display: none !important;
+}
+.maplibregl-ctrl-attrib {
+  background-color: hsl(var(--background) / 0.8) !important;
+  color: hsl(var(--muted-foreground)) !important;
+  border-radius: 6px !important;
+  font-size: 10px !important;
+  padding: 2px 6px !important;
+}
+.maplibregl-ctrl-attrib a {
+  color: hsl(var(--primary)) !important;
+}
+

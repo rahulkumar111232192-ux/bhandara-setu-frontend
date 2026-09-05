@@ -20,6 +20,16 @@ import {
 } from "@/lib/map-icons";
 import { useTheme } from "@/components/ThemeProvider";
 import { renderPopupHtml } from "@/components/MarkerPopupPreview";
+import dynamic from "next/dynamic";
+
+const DarkVectorMap = dynamic(() => import("@/components/DarkVectorMap"), {
+  ssr: false,
+  loading: () => (
+    <div className="h-full w-full bg-[#12110f] animate-pulse flex items-center justify-center">
+      <span className="text-amber-500 text-sm font-medium">Loading Amber Vector Map...</span>
+    </div>
+  ),
+});
 
 /* ── Subcomponent: syncs map view with parent state ── */
 function MapController({
@@ -138,6 +148,11 @@ export default function LeafletMap({
     return () => {
       clearTimeout(timer);
       setShouldRender(false);
+      const c = L.DomUtil.get("bhandara-map-root");
+      if (c !== null) {
+        // @ts-ignore
+        c._leaflet_id = null;
+      }
     };
   }, []);
 
@@ -151,8 +166,25 @@ export default function LeafletMap({
     );
   }
 
+  if (theme === "dark") {
+    return (
+      <div key="vector-map-dark" className="h-full w-full relative overflow-hidden">
+        <DarkVectorMap
+          center={center}
+          zoom={zoom}
+          bhandaras={bhandaras}
+          userLocation={userLocation}
+          onMarkerClick={onMarkerClick}
+          onMarkerHover={onMarkerHover}
+          hoveredId={hoveredId}
+          selectedId={selectedId}
+        />
+      </div>
+    );
+  }
+
   return (
-    <div className="h-full w-full relative overflow-hidden">
+    <div key="leaflet-map-light" className="h-full w-full relative overflow-hidden">
       <MapContainer
         id="bhandara-map-root"
         center={center}
