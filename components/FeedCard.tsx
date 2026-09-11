@@ -72,7 +72,7 @@ export default function FeedCard({
     const active = toggleReminder(bhandara.id);
     setHasReminder(active);
     toast({
-      title: active ? "🔔 Reminder Active" : "Reminder Removed",
+      title: active ? "🔔 Reminder Active" : "🔕 Reminder Cancelled",
       description: active
         ? `We'll alert you as soon as "${bhandara.title}" starts!`
         : `Notification cancelled for "${bhandara.title}".`,
@@ -209,15 +209,16 @@ export default function FeedCard({
                 type="button"
                 onClick={handleReminderToggle}
                 className={cn(
-                  "flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold transition-all shrink-0",
+                  "flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold transition-all shrink-0 cursor-pointer",
                   hasReminder
                     ? "bg-amber-500 text-white shadow-xs"
                     : "bg-amber-500/15 text-amber-700 dark:text-amber-300 hover:bg-amber-500/25 border border-amber-500/30"
                 )}
-                title={hasReminder ? "Reminder active (tap to remove)" : "Alert me when event starts"}
+                title={hasReminder ? "Reminder active • Tap to cancel" : "Get notified when event starts • Tap to turn ON"}
+                aria-label={hasReminder ? "Turn off reminder" : "Turn on reminder"}
               >
                 <Bell className={cn("w-3 h-3", hasReminder && "fill-current")} />
-                <span>{hasReminder ? "Reminded" : "Remind Me"}</span>
+                <span>{hasReminder ? "Reminded 🔔" : "Remind Me"}</span>
               </button>
             )}
             {(bhandara.upvoteCount ?? 0) > 0 && (

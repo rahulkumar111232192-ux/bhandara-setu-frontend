@@ -1,3 +1,5 @@
+import { markNotificationSent } from "./notifications";
+
 // Client-side manager for Upcoming Bhandara Event Reminders
 
 const REMINDERS_KEY = "bhandara_event_reminders";
@@ -46,4 +48,13 @@ export function clearReminder(postId: number): void {
     localStorage.setItem(REMINDERS_KEY, JSON.stringify(next));
     window.dispatchEvent(new CustomEvent("bhandara-reminders-changed", { detail: { postId, active: false } }));
   } catch {}
+}
+
+/**
+ * Marks a reminder as fired: clears it from active list and records it in sent notifications
+ * so it is NEVER triggered again.
+ */
+export function markReminderFired(postId: number): void {
+  clearReminder(postId);
+  markNotificationSent(postId, "reminder");
 }

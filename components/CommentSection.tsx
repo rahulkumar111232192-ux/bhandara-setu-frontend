@@ -1,9 +1,10 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { MessageCircle, Send, Trash2, Reply, ChevronDown, ChevronUp } from "lucide-react";
+import { MessageCircle, Send, Trash2, Reply, ChevronDown, ChevronUp, RefreshCw } from "lucide-react";
 import { apiFetch, getApiBaseUrl } from "@/lib/api";
 import { useAuth } from "@/hooks/use-auth";
+import { toast } from "@/components/Toaster";
 import Link from "next/link";
 
 interface CommentUser { id: number; name: string | null; }
@@ -61,9 +62,16 @@ function CommentItem({
   const handleDelete = async () => {
     if (!confirm("Are you sure you want to delete this comment?")) return;
     try {
-      await apiFetch(`/api/posts/${postId}/comments/${comment.id}`, { method: "DELETE" });
-      onDeleted(comment.id);
-    } catch {}
+      const res = await apiFetch(`/api/posts/${postId}/comments/${comment.id}`, { method: "DELETE" });
+      if (res.ok) {
+        onDeleted(comment.id);
+        toast({ title: "Comment Deleted", description: "Your comment was removed." });
+      } else {
+        toast({ title: "Could not delete", description: "You cannot delete this comment.", variant: "destructive" });
+      }
+    } catch (err: any) {
+      toast({ title: "Error", description: err?.message || "Could not delete comment.", variant: "destructive" });
+    }
   };
 
   const handleReply = async () => {
@@ -84,8 +92,13 @@ function CommentItem({
         setReplyText("");
         setReplyOpen(false);
         setShowReplies(true);
+        toast({ title: "Reply Posted", description: "Your reply has been saved." });
+      } else {
+        toast({ title: "Could not post reply", description: data.message || "Failed to submit reply.", variant: "destructive" });
       }
-    } catch {} finally {
+    } catch (err: any) {
+      toast({ title: "Could not post reply", description: err?.message || "Network error.", variant: "destructive" });
+    } finally {
       setSubmitting(false);
     }
   };
@@ -244,7 +257,7 @@ export default function CommentSection({ postId, postOwnerId }: CommentSectionPr
   }, [postId, fetchComments]);
 
   const handleSubmit = async () => {
-    if (!text.trim()) return;
+    if (!text.trim() || submitting) return;
     setSubmitting(true);
     try {
       await ensureAnonymousIdentity();
@@ -259,8 +272,13 @@ export default function CommentSection({ postId, postOwnerId }: CommentSectionPr
       if (data.status === 201) {
         setComments((prev) => [data.data, ...prev]);
         setText("");
+        toast({ title: "Comment Posted!", description: "Your update has been shared with the community." });
+      } else {
+        toast({ title: "Could not post comment", description: data?.message || "Server rejected comment.", variant: "destructive" });
       }
-    } catch {} finally {
+    } catch (err: any) {
+      toast({ title: "Could not post comment", description: err?.message || "Network error. Please try again.", variant: "destructive" });
+    } finally {
       setSubmitting(false);
     }
   };
@@ -279,14 +297,16 @@ export default function CommentSection({ postId, postOwnerId }: CommentSectionPr
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && handleSubmit()}
           placeholder="Share your update or ask about food items…"
-          className="flex-1 text-sm rounded-xl border border-border/60 bg-background/60 px-3 py-2 focus:outline-none focus:ring-1 focus:ring-ring placeholder:text-muted-foreground/60"
+          disabled={submitting}
+          className="flex-1 text-sm rounded-xl border border-border/60 bg-background/60 px-3 py-2 focus:outline-none focus:ring-1 focus:ring-ring placeholder:text-muted-foreground/60 disabled:opacity-60"
         />
         <button
           onClick={handleSubmit}
           disabled={submitting || !text.trim()}
-          className="p-2 rounded-xl bg-primary text-primary-foreground disabled:opacity-50 hover:bg-primary/90 transition-colors"
+          className="p-2 rounded-xl bg-primary text-primary-foreground disabled:opacity-50 hover:bg-primary/90 transition-colors flex items-center justify-center min-w-[36px]"
+          title="Send comment"
         >
-          <Send className="w-4 h-4" />
+          {submitting ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
         </button>
       </div>
 

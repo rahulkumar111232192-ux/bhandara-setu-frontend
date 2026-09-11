@@ -30,7 +30,17 @@ import { useTheme } from "@/components/ThemeProvider";
 import { toast } from "@/components/Toaster";
 import { cn } from "@/lib/utils";
 import { apiFetch, getApiBaseUrl } from "@/lib/api";
-import { isReminderSet } from "@/lib/reminders";
+import { isReminderSet, markReminderFired } from "@/lib/reminders";
+import {
+  getNearbyAlertsEnabled,
+  setNearbyAlertsEnabled,
+  hasNotificationBeenSent,
+  markNotificationSent,
+  calculateDistanceMeters,
+  formatDistance,
+  formatTimeRemaining,
+  getVisitorToken,
+} from "@/lib/notifications";
 
 const LeafletMap = dynamic(() => import("@/components/LeafletMap"), {
   ssr: false,
@@ -151,16 +161,31 @@ export default function Home() {
   // Sync preference to server whenever location or auth state updates
   const syncNotificationPreference = useCallback(async (coords: [number, number]) => {
     try {
+      const token = getVisitorToken();
       await apiFetch("/api/notifications/subscribe", {
         method: "POST",
         body: JSON.stringify({
           latitude: coords[0],
           longitude: coords[1],
           radiusKm: 10,
+          token,
         }),
       });
     } catch (err) {
       console.warn("Could not sync notification preference", err);
+    }
+  }, []);
+
+  // Unsubscribe from server-side alerts
+  const unsubscribeNearbyAlerts = useCallback(async () => {
+    try {
+      const token = getVisitorToken();
+      await apiFetch("/api/notifications/unsubscribe", {
+        method: "POST",
+        body: JSON.stringify({ token }),
+      });
+    } catch (err) {
+      console.warn("Could not unsubscribe notifications", err);
     }
   }, []);
 
@@ -204,13 +229,23 @@ export default function Home() {
       navigator.serviceWorker.register("/sw.js").catch(() => {});
     }
 
-    if (typeof window !== "undefined" && "Notification" in window) {
-      const isGranted = Notification.permission === "granted";
-      setNotificationsEnabled(isGranted);
-      if (isGranted && userLocation) {
-        syncNotificationPreference(userLocation);
-      }
+    // Only set enabled if user EXPLICITLY turned on nearby alerts AND browser granted permission
+    const isNearbyActive = getNearbyAlertsEnabled();
+    setNotificationsEnabled(isNearbyActive);
+
+    if (isNearbyActive && userLocation) {
+      syncNotificationPreference(userLocation);
     }
+
+    const handleAlertsChanged = (e: Event) => {
+      const custom = e as CustomEvent<{ enabled: boolean }>;
+      if (custom.detail !== undefined) {
+        setNotificationsEnabled(custom.detail.enabled);
+      } else {
+        setNotificationsEnabled(getNearbyAlertsEnabled());
+      }
+    };
+    window.addEventListener("bhandara-alerts-changed", handleAlertsChanged);
 
     // SSE listener for nearby food distribution broadcasts & transitions using dynamic getApiBaseUrl()
     const apiUrl = getApiBaseUrl();
@@ -219,29 +254,98 @@ export default function Home() {
     es.addEventListener("notification:nearby", (e) => {
       try {
         const payload = JSON.parse(e.data);
-        const title = `Nearby Food Alert: ${payload.title} 🛕`;
-        const body = `${payload.address || "Community meal"} is starting ~${payload.distanceMeters || 100}m away!`;
+        if (!payload || !payload.postId) return;
+
+        // 1. Only alert if user explicitly enabled nearby alerts
+        if (!getNearbyAlertsEnabled()) return;
+
+        // 2. Prevent irritating duplicate alerts
+        if (hasNotificationBeenSent(payload.postId, "nearby")) return;
+
+        // 3. Compute accurate distance from user's live GPS coordinates
+        let formattedDist = "";
+        if (userLocation && payload.latitude && payload.longitude) {
+          const meters = calculateDistanceMeters(
+            userLocation[0],
+            userLocation[1],
+            Number(payload.latitude),
+            Number(payload.longitude)
+          );
+          // If the post is farther than 10km away from user, do not alert
+          if (meters > 10000) return;
+          formattedDist = formatDistance(meters);
+        }
+
+        // 4. Build accurate message based on live vs upcoming status and timing
+        const isLive = payload.status === "live" || payload.isLive;
+        let title = "";
+        let body = "";
+
+        if (isLive) {
+          title = `🔴 Live Food Alert: ${payload.title} 🛕`;
+          const distText = formattedDist ? ` (~${formattedDist})` : "";
+          body = `Live Now${distText} • ${payload.address || "Community meal"} is serving food!`;
+        } else {
+          const timeText = formatTimeRemaining(payload.startTime);
+          title = `⏳ Upcoming Food Drive: ${payload.title}`;
+          const distText = formattedDist ? ` (~${formattedDist})` : "";
+          body = `${timeText}${distText} • ${payload.address || "Community meal scheduled"}`;
+        }
+
         const postUrl = `/?post=${payload.postId}`;
+
+        // 5. Mark as sent immediately to guarantee deduplication
+        markNotificationSent(payload.postId, "nearby");
 
         showNativeNotification(title, body, postUrl);
         toast({ title, description: body });
-      } catch {}
+      } catch (err) {
+        console.warn("notification:nearby error", err);
+      }
     });
 
     es.addEventListener("post:updated", (e) => {
       try {
         const updated = JSON.parse(e.data);
-        // If an upcoming post transitioned to LIVE and user requested reminder
-        if (updated && updated.isLive && isReminderSet(updated.id)) {
-          const title = `Bhandara Started: ${updated.title} 🍛`;
-          const body = `${updated.address || "Serving now"} is live! Tap to view details.`;
+        if (!updated || !updated.id) return;
+
+        // If an upcoming post transitioned to LIVE and user requested a reminder
+        if (updated.isLive && isReminderSet(updated.id)) {
+          // Prevent irritating duplicate alerts
+          if (hasNotificationBeenSent(updated.id, "reminder")) {
+            return;
+          }
+
+          // Mark reminder as fired & remove from active reminder list immediately
+          markReminderFired(updated.id);
+
+          // Calculate distance accurately with user's current GPS location
+          let distText = "";
+          if (userLocation && updated.latitude && updated.longitude) {
+            const meters = calculateDistanceMeters(
+              userLocation[0],
+              userLocation[1],
+              Number(updated.latitude),
+              Number(updated.longitude)
+            );
+            distText = ` (~${formatDistance(meters)})`;
+          }
+
+          const title = `🔔 Bhandara Started: ${updated.title} 🍛`;
+          const body = `🔴 Live Now${distText} • ${updated.address || "Serving food now"}! Tap to view details.`;
+
           showNativeNotification(title, body, `/?post=${updated.id}`);
           toast({ title, description: body });
         }
-      } catch {}
+      } catch (err) {
+        console.warn("post:updated reminder error", err);
+      }
     });
 
-    return () => es.close();
+    return () => {
+      es.close();
+      window.removeEventListener("bhandara-alerts-changed", handleAlertsChanged);
+    };
   }, [userLocation, syncNotificationPreference, showNativeNotification]);
 
   const handleToggleNotifications = async () => {
@@ -254,20 +358,44 @@ export default function Home() {
       return;
     }
 
+    // IF ALREADY ENABLED -> TOGGLE OFF!
+    if (notificationsEnabled) {
+      setNearbyAlertsEnabled(false);
+      setNotificationsEnabled(false);
+      await unsubscribeNearbyAlerts();
+      toast({
+        title: "🔕 Nearby Alerts Turned Off",
+        description: "You will no longer receive nearby food drive notifications.",
+      });
+      return;
+    }
+
+    // IF NOT ENABLED -> TOGGLE ON!
     if (Notification.permission === "granted") {
+      setNearbyAlertsEnabled(true);
       setNotificationsEnabled(true);
       if (userLocation) {
         await syncNotificationPreference(userLocation);
       }
       toast({
-        title: "Alerts Active",
+        title: "🔔 Nearby Alerts Turned ON",
         description: "You'll receive real notifications when free meals start within 10km.",
+      });
+      return;
+    }
+
+    if (Notification.permission === "denied") {
+      toast({
+        title: "Notifications Blocked",
+        description: "Please allow notifications in your browser settings to receive alerts.",
+        variant: "destructive",
       });
       return;
     }
 
     const permission = await Notification.requestPermission();
     if (permission === "granted") {
+      setNearbyAlertsEnabled(true);
       setNotificationsEnabled(true);
       if ("serviceWorker" in navigator) {
         navigator.serviceWorker.register("/sw.js").catch(() => {});
@@ -276,10 +404,11 @@ export default function Home() {
         await syncNotificationPreference(userLocation);
       }
       toast({
-        title: "Notifications Enabled!",
+        title: "🔔 Nearby Alerts Enabled!",
         description: "You will receive real alerts when free meals or upcoming bhandaras start in your area.",
       });
     } else {
+      setNearbyAlertsEnabled(false);
       setNotificationsEnabled(false);
       toast({
         title: "Notifications Blocked",
@@ -674,12 +803,13 @@ export default function Home() {
         <button
           onClick={handleToggleNotifications}
           className={cn(
-            "flex items-center gap-1.5 px-2.5 sm:px-3 py-2 rounded-xl glass text-xs font-semibold shadow-sm transition-all hover:scale-105",
+            "flex items-center gap-1.5 px-2.5 sm:px-3 py-2 rounded-xl glass text-xs font-semibold shadow-sm transition-all hover:scale-105 cursor-pointer",
             notificationsEnabled
               ? "bg-primary/10 text-primary border border-primary/30"
               : "text-muted-foreground hover:text-foreground"
           )}
-          title={notificationsEnabled ? "Notifications active" : "Enable upcoming event alerts"}
+          title={notificationsEnabled ? "Nearby alerts are ON • Tap to turn OFF" : "Nearby alerts are OFF • Tap to turn ON"}
+          aria-label={notificationsEnabled ? "Disable nearby alerts" : "Enable nearby alerts"}
         >
           {notificationsEnabled ? (
             <>

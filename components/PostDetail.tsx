@@ -3,7 +3,7 @@
 import React, { useState } from "react";
 import Link from "next/link";
 import { Bhandara, CATEGORY_MAP } from "@/lib/types";
-import { X, Share2, MapPin, Calendar, Clock, UtensilsCrossed, Eye, Star, ThumbsUp, ThumbsDown, User, BadgeCheck, Navigation, Edit, ArrowLeft, Bell } from "lucide-react";
+import { X, Share2, MapPin, Calendar, Clock, UtensilsCrossed, Eye, Star, ThumbsUp, ThumbsDown, User, BadgeCheck, Navigation, Edit, ArrowLeft, Bell, Lock } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/use-auth";
 import { apiFetch } from "@/lib/api";
@@ -11,12 +11,13 @@ import CommentSection from "@/components/CommentSection";
 import { toast } from "@/components/Toaster";
 import { isReminderSet, toggleReminder } from "@/lib/reminders";
 
-
 interface PostDetailProps {
   bhandara: Bhandara | null;
   open: boolean;
   onClose: () => void;
   onPostUpdated?: (updated: Bhandara) => void;
+  userLocation?: [number, number] | null;
+  onLocateMe?: () => void;
 }
 
 function PhotoTape({
@@ -75,12 +76,33 @@ function PhotoTape({
   );
 }
 
-export default function PostDetail({ bhandara, open, onClose, onPostUpdated }: PostDetailProps) {
+export default function PostDetail({ bhandara, open, onClose, onPostUpdated, userLocation, onLocateMe }: PostDetailProps) {
   const { user, ensureAnonymousIdentity } = useAuth();
   const [reactionLoading, setReactionLoading] = useState(false);
   const [userVote, setUserVote] = useState<"upvote" | "downvote" | null>(null);
   const [isExpanded, setIsExpanded] = useState(false);
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
+
+  // Proximity Calculation (500m proximity threshold for voting/verifying)
+  const userDistanceMeters = React.useMemo(() => {
+    if (!userLocation || !bhandara) return null;
+    const toRad = (x: number) => (x * Math.PI) / 180;
+    const R = 6371000;
+    const dLat = toRad(bhandara.latitude - userLocation[0]);
+    const dLon = toRad(bhandara.longitude - userLocation[1]);
+    const lat1 = toRad(userLocation[0]);
+    const lat2 = toRad(bhandara.latitude);
+    const a =
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.sin(dLon / 2) * Math.sin(dLon / 2) * Math.cos(lat1) * Math.cos(lat2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return Math.round(R * c);
+  }, [userLocation, bhandara?.latitude, bhandara?.longitude]);
+
+  const isNearbyForVerification = userDistanceMeters !== null && userDistanceMeters <= 500;
+  const formattedDistance = userDistanceMeters !== null
+    ? userDistanceMeters < 1000 ? `${userDistanceMeters}m` : `${(userDistanceMeters / 1000).toFixed(1)}km`
+    : null;
 
   const isOwner = Boolean(user && !user.isAnonymous && bhandara && String(user.id) === String(bhandara.userId));
   const isUpcoming = Boolean(bhandara && (bhandara.isUpcoming || bhandara.status?.toLowerCase() === "upcoming"));
@@ -105,7 +127,7 @@ export default function PostDetail({ bhandara, open, onClose, onPostUpdated }: P
     const active = toggleReminder(bhandara.id);
     setHasReminder(active);
     toast({
-      title: active ? "🔔 Reminder Active" : "Reminder Removed",
+      title: active ? "🔔 Reminder Active" : "🔕 Reminder Cancelled",
       description: active
         ? `We'll alert you as soon as "${bhandara.title}" starts!`
         : `Notification cancelled for "${bhandara.title}".`,
@@ -293,12 +315,13 @@ export default function PostDetail({ bhandara, open, onClose, onPostUpdated }: P
                   type="button"
                   onClick={handleReminderToggle}
                   className={cn(
-                    "flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold transition-all border",
+                    "flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold transition-all border cursor-pointer",
                     hasReminder
                       ? "bg-amber-500 text-white border-amber-600 shadow-xs"
                       : "bg-amber-500/10 text-amber-700 dark:text-amber-300 border-amber-500/30 hover:bg-amber-500/20"
                   )}
-                  title={hasReminder ? "Reminder active - tap to cancel" : "Get notified when this event starts"}
+                  title={hasReminder ? "Reminder active • Tap to cancel" : "Get notified when this event starts • Tap to turn ON"}
+                  aria-label={hasReminder ? "Turn off reminder" : "Turn on reminder"}
                 >
                   <Bell className={cn("w-3.5 h-3.5", hasReminder && "fill-current")} />
                   <span>{hasReminder ? "Reminded 🔔" : "Remind Me"}</span>
@@ -427,56 +450,97 @@ export default function PostDetail({ bhandara, open, onClose, onPostUpdated }: P
               </div>
             </div>
 
-            {/* Community Signal */}
-            <div className="rounded-2xl border p-4 bg-muted/30 space-y-3">
-              <div>
-                <h3 className="font-semibold text-sm">Community Verification</h3>
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  Are you within 500m of this event? Verify if food is actively being served to help neighbors.
+            {/* Community Signal & Proximity-Gated Verification */}
+            {!userLocation ? (
+              <div className="rounded-2xl border p-4 bg-muted/20 border-border/80 space-y-2.5">
+                <div className="flex items-center gap-2 text-xs font-semibold text-foreground">
+                  <MapPin className="w-4 h-4 text-amber-500 shrink-0" />
+                  <span>Location Needed to Verify</span>
+                </div>
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  Only devotees physically within 500m can verify food availability or report this listing to prevent fake votes.
+                </p>
+                {onLocateMe && (
+                  <button
+                    onClick={onLocateMe}
+                    className="w-full py-2 px-3 rounded-xl bg-primary/15 hover:bg-primary/25 text-primary text-xs font-semibold transition-colors flex items-center justify-center gap-1.5"
+                  >
+                    <Navigation className="w-3.5 h-3.5" /> Check My Proximity
+                  </button>
+                )}
+              </div>
+            ) : !isNearbyForVerification ? (
+              <div className="rounded-2xl border p-4 bg-muted/20 border-border/80 space-y-2">
+                <div className="flex items-center justify-between text-xs font-semibold text-foreground">
+                  <div className="flex items-center gap-2">
+                    <Lock className="w-4 h-4 text-muted-foreground shrink-0" />
+                    <span>Proximity Verification Locked</span>
+                  </div>
+                  <span className="text-[11px] font-mono text-muted-foreground px-2 py-0.5 rounded-full bg-muted border border-border/60">
+                    📍 {formattedDistance} away
+                  </span>
+                </div>
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  You are currently {formattedDistance} away. Only devotees within 500m can confirm active food distribution or report this listing.
                 </p>
               </div>
+            ) : (
+              <div className="rounded-2xl border p-4 bg-green-500/10 border-green-500/30 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5 text-xs font-bold text-green-700 dark:text-green-300">
+                    <BadgeCheck className="w-4 h-4 text-green-600" />
+                    <span>Proximity Verified (~{formattedDistance} away)</span>
+                  </div>
+                  <span className="text-[10px] uppercase tracking-wider font-bold text-green-600 px-2 py-0.5 rounded-full bg-green-500/20 border border-green-500/30">
+                    Within 500m
+                  </span>
+                </div>
+                <p className="text-xs text-foreground/80">
+                  Help neighbors by confirming if food is actively being served right now:
+                </p>
 
-              <div className="flex gap-2.5">
-                <button 
-                  onClick={() => handleVote("upvote")}
+                <div className="flex gap-2.5">
+                  <button 
+                    onClick={() => handleVote("upvote")}
+                    disabled={reactionLoading}
+                    className={cn(
+                      "flex-1 flex flex-col items-center gap-1.5 p-3 rounded-xl border transition-all",
+                      userVote === "upvote"
+                        ? "bg-green-500/25 border-green-500 text-green-700 dark:text-green-300 font-semibold shadow-xs"
+                        : "bg-card hover:border-green-500/50 hover:bg-green-500/5 text-foreground"
+                    )}
+                  >
+                    <ThumbsUp className="w-5 h-5 text-green-600" />
+                    <span className="text-xs font-semibold">✅ Food Available ({bhandara.upvoteCount ?? 0})</span>
+                  </button>
+                  <button 
+                    onClick={() => handleVote("downvote")}
+                    disabled={reactionLoading}
+                    className={cn(
+                      "flex-1 flex flex-col items-center gap-1.5 p-3 rounded-xl border transition-all",
+                      userVote === "downvote"
+                        ? "bg-amber-500/25 border-amber-500 text-amber-700 dark:text-amber-300 font-semibold shadow-xs"
+                        : "bg-card hover:border-amber-500/50 hover:bg-amber-500/5 text-foreground"
+                    )}
+                  >
+                    <Clock className="w-5 h-5 text-amber-500" />
+                    <span className="text-xs font-semibold">⏱ Event Ended ({bhandara.downvoteCount ?? 0})</span>
+                  </button>
+                </div>
+
+                <button
+                  onClick={() => {
+                    if (confirm("Report this listing as fake or misleading?")) {
+                      handleVote("downvote");
+                    }
+                  }}
                   disabled={reactionLoading}
-                  className={cn(
-                    "flex-1 flex flex-col items-center gap-1.5 p-3 rounded-xl border transition-all",
-                    userVote === "upvote"
-                      ? "bg-green-500/20 border-green-500 text-green-700 dark:text-green-300 font-semibold shadow-xs"
-                      : "bg-card hover:border-green-500/50 hover:bg-green-500/5"
-                  )}
+                  className="w-full py-1.5 text-center text-xs text-red-500/80 hover:text-red-600 hover:bg-red-500/5 rounded-lg transition-colors"
                 >
-                  <ThumbsUp className="w-5 h-5 text-green-600" />
-                  <span className="text-xs font-semibold">✅ Food Available ({bhandara.upvoteCount ?? 0})</span>
-                </button>
-                <button 
-                  onClick={() => handleVote("downvote")}
-                  disabled={reactionLoading}
-                  className={cn(
-                    "flex-1 flex flex-col items-center gap-1.5 p-3 rounded-xl border transition-all",
-                    userVote === "downvote"
-                      ? "bg-amber-500/20 border-amber-500 text-amber-700 dark:text-amber-300 font-semibold shadow-xs"
-                      : "bg-card hover:border-amber-500/50 hover:bg-amber-500/5"
-                  )}
-                >
-                  <Clock className="w-5 h-5 text-amber-500" />
-                  <span className="text-xs font-semibold">⏱ Event Ended ({bhandara.downvoteCount ?? 0})</span>
+                  ⚠️ Report listing as fake or inactive
                 </button>
               </div>
-
-              <button
-                onClick={() => {
-                  if (confirm("Report this listing as fake or misleading?")) {
-                    handleVote("downvote");
-                  }
-                }}
-                disabled={reactionLoading}
-                className="w-full py-1.5 text-center text-xs text-red-500/80 hover:text-red-600 hover:bg-red-500/5 rounded-lg transition-colors"
-              >
-                ⚠️ Report listing as fake or inactive
-              </button>
-            </div>
+            )}
 
             {/* Comments */}
             <div className="border-t border-border pt-4">
@@ -579,15 +643,16 @@ export default function PostDetail({ bhandara, open, onClose, onPostUpdated }: P
                     type="button"
                     onClick={handleReminderToggle}
                     className={cn(
-                      "flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold transition-all border",
+                      "flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold transition-all border cursor-pointer",
                       hasReminder
                         ? "bg-amber-500 text-white border-amber-600 shadow-xs"
                         : "bg-amber-500/10 text-amber-700 dark:text-amber-300 border-amber-500/30 hover:bg-amber-500/20"
                     )}
-                    title={hasReminder ? "Reminder active - tap to cancel" : "Get notified when this event starts"}
+                    title={hasReminder ? "Reminder active • Tap to cancel" : "Get notified when this event starts • Tap to turn ON"}
+                    aria-label={hasReminder ? "Turn off reminder" : "Turn on reminder"}
                   >
                     <Bell className={cn("w-3 h-3", hasReminder && "fill-current")} />
-                    <span>{hasReminder ? "Reminded" : "Remind"}</span>
+                    <span>{hasReminder ? "Reminded 🔔" : "Remind"}</span>
                   </button>
                 )}
               </div>
@@ -667,40 +732,65 @@ export default function PostDetail({ bhandara, open, onClose, onPostUpdated }: P
               </div>
             </div>
 
-            {/* Fast Community Verification */}
-            <div className="flex flex-col gap-2">
-              <div className="flex gap-2">
-                <button 
-                  onClick={() => handleVote("upvote")}
+            {/* Fast Community Verification (Proximity Gated) */}
+            {!userLocation ? (
+              <div className="rounded-xl border p-3 bg-muted/20 border-border/80 space-y-1.5 text-xs">
+                <div className="flex items-center gap-1.5 font-semibold text-foreground">
+                  <MapPin className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                  <span>Location needed to verify</span>
+                </div>
+                <p className="text-[11px] text-muted-foreground">Only devotees within 500m can verify food availability.</p>
+              </div>
+            ) : !isNearbyForVerification ? (
+              <div className="rounded-xl border p-3 bg-muted/20 border-border/80 flex items-center justify-between text-xs">
+                <div className="flex items-center gap-1.5 text-muted-foreground font-medium">
+                  <Lock className="w-3.5 h-3.5 shrink-0" />
+                  <span>Verification locked (within 500m only)</span>
+                </div>
+                <span className="text-[10px] font-mono text-muted-foreground px-2 py-0.5 rounded-full bg-muted border border-border/60">
+                  📍 {formattedDistance}
+                </span>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-2 p-3 rounded-2xl border border-green-500/30 bg-green-500/10">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-bold text-green-700 dark:text-green-300 flex items-center gap-1">
+                    <BadgeCheck className="w-3.5 h-3.5 text-green-600" /> Proximity Verified (~{formattedDistance})
+                  </span>
+                </div>
+                <div className="flex gap-2">
+                  <button 
+                    onClick={() => handleVote("upvote")}
+                    disabled={reactionLoading}
+                    className={cn(
+                      "flex-1 py-2 px-3 rounded-xl border flex items-center justify-center gap-1.5 text-xs font-semibold transition-all",
+                      userVote === "upvote" ? "bg-green-500/25 border-green-500 text-green-700" : "bg-card text-foreground"
+                    )}
+                  >
+                    <ThumbsUp className="w-4 h-4 text-green-600" /> ✅ Available ({bhandara.upvoteCount ?? 0})
+                  </button>
+                  <button 
+                    onClick={() => handleVote("downvote")}
+                    disabled={reactionLoading}
+                    className={cn(
+                      "flex-1 py-2 px-3 rounded-xl border flex items-center justify-center gap-1.5 text-xs font-semibold transition-all",
+                      userVote === "downvote" ? "bg-amber-500/25 border-amber-500 text-amber-700" : "bg-card text-foreground"
+                    )}
+                  >
+                    <Clock className="w-4 h-4 text-amber-500" /> ⏱ Ended ({bhandara.downvoteCount ?? 0})
+                  </button>
+                </div>
+                <button
+                  onClick={() => {
+                    if (confirm("Report this listing as fake or misleading?")) handleVote("downvote");
+                  }}
                   disabled={reactionLoading}
-                  className={cn(
-                    "flex-1 py-2.5 px-3 rounded-xl border flex items-center justify-center gap-1.5 text-xs font-semibold transition-all",
-                    userVote === "upvote" ? "bg-green-500/20 border-green-500 text-green-700" : "bg-card"
-                  )}
+                  className="py-1 text-center text-[11px] text-red-500/80 hover:text-red-600 transition-colors"
                 >
-                  <ThumbsUp className="w-4 h-4 text-green-600" /> ✅ Available ({bhandara.upvoteCount ?? 0})
-                </button>
-                <button 
-                  onClick={() => handleVote("downvote")}
-                  disabled={reactionLoading}
-                  className={cn(
-                    "flex-1 py-2.5 px-3 rounded-xl border flex items-center justify-center gap-1.5 text-xs font-semibold transition-all",
-                    userVote === "downvote" ? "bg-amber-500/20 border-amber-500 text-amber-700" : "bg-card"
-                  )}
-                >
-                  <Clock className="w-4 h-4 text-amber-500" /> ⏱ Ended ({bhandara.downvoteCount ?? 0})
+                  ⚠️ Report as fake
                 </button>
               </div>
-              <button
-                onClick={() => {
-                  if (confirm("Report this listing as fake or misleading?")) handleVote("downvote");
-                }}
-                disabled={reactionLoading}
-                className="py-1 text-center text-[11px] text-red-500/80 hover:text-red-600 transition-colors"
-              >
-                ⚠️ Report as fake
-              </button>
-            </div>
+            )}
 
             {/* Comments inside bottom sheet */}
             <div className="border-t border-border pt-3">
