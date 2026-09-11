@@ -1,5 +1,18 @@
-﻿export async function apiFetch(path: string, options: RequestInit = {}) {
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "");
+export function getApiBaseUrl(): string {
+  let apiUrl = process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") || "";
+  if (typeof window !== "undefined") {
+    const currentHost = window.location.hostname;
+    // If accessing from a mobile phone on LAN (e.g. 192.168.x.x) and apiUrl has localhost,
+    // swap localhost with the current LAN IP so the phone connects to port 5000 on the computer!
+    if (apiUrl.includes("localhost") && currentHost && currentHost !== "localhost" && currentHost !== "127.0.0.1") {
+      apiUrl = apiUrl.replace("localhost", currentHost);
+    }
+  }
+  return apiUrl;
+}
+
+export async function apiFetch(path: string, options: RequestInit = {}) {
+  const apiUrl = getApiBaseUrl();
   const token =
     typeof window !== "undefined"
       ? localStorage.getItem("bhandara-token")

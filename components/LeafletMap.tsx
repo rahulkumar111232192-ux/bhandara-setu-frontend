@@ -6,6 +6,7 @@ import {
   Marker,
   Popup,
   useMap,
+  useMapEvents,
 } from "react-leaflet";
 import type { LatLngExpression } from "leaflet";
 import { useEffect, useState, useMemo } from "react";
@@ -58,6 +59,17 @@ function MapAttribution() {
   return null;
 }
 
+function MapEventsHandler({ onMapClick }: { onMapClick?: (coords: [number, number]) => void }) {
+  useMapEvents({
+    click(e) {
+      if (onMapClick) {
+        onMapClick([e.latlng.lat, e.latlng.lng]);
+      }
+    },
+  });
+  return null;
+}
+
 /* ── Subcomponent: individual bhandara marker ── */
 function BhandaraMarker({
   bhandara,
@@ -79,9 +91,10 @@ function BhandaraMarker({
     ? CATEGORY_MAP[bhandara.category].color
     : undefined;
 
+  const isUpcoming = Boolean(bhandara.isUpcoming || bhandara.status?.toLowerCase() === "upcoming");
   const icon = useMemo(
-    () => createBhandaraIcon(state, catColor, bhandara.isLive),
-    [state, catColor, bhandara.isLive]
+    () => createBhandaraIcon(state, catColor, bhandara.isLive, isUpcoming),
+    [state, catColor, bhandara.isLive, isUpcoming]
   );
 
   return (
@@ -117,6 +130,7 @@ interface LeafletMapProps {
   onMarkerHover: (id: number | null) => void;
   hoveredId: number | null;
   selectedId: number | null;
+  onMapClick?: (coords: [number, number]) => void;
 }
 
 export default function LeafletMap({
@@ -128,6 +142,7 @@ export default function LeafletMap({
   userLocation,
   hoveredId,
   selectedId,
+  onMapClick,
 }: LeafletMapProps) {
   const [shouldRender, setShouldRender] = useState(false);
   const { theme } = useTheme();
@@ -178,6 +193,7 @@ export default function LeafletMap({
           onMarkerHover={onMarkerHover}
           hoveredId={hoveredId}
           selectedId={selectedId}
+          onMapClick={onMapClick ? ({ lat, lng }) => onMapClick([lat, lng]) : undefined}
         />
       </div>
     );
@@ -196,6 +212,7 @@ export default function LeafletMap({
         <TileLayer key={theme} {...tileLayer} />
         <MapAttribution />
         <MapController center={center} zoom={zoom} />
+        <MapEventsHandler onMapClick={onMapClick} />
 
         {userLocation && (
           <Marker position={userLocation} icon={createUserLocationIcon()}>

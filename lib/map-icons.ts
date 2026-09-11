@@ -1,4 +1,4 @@
-﻿import L from "leaflet";
+import L from "leaflet";
 
 /* ================================================================
    MARKER ICON FACTORY — 3 states: default | hovered | selected
@@ -85,13 +85,18 @@ function buildMarkerSvg(
 export function createBhandaraIcon(
   state: MarkerState = "default",
   accentColor?: string,
-  isLive: boolean = true
+  isLive: boolean = true,
+  isUpcoming: boolean = false
 ) {
   const size = state === "default" ? 32 : state === "hovered" ? 38 : 42;
-  const opacity = isLive ? 1 : 0.45;
-  const filter = isLive ? "" : "grayscale(80%)";
+  const isEnded = !isLive && !isUpcoming;
+  const opacity = isEnded ? 0.45 : 1;
+  const filter = isEnded ? "grayscale(80%)" : "";
+  const upcomingBadge = isUpcoming
+    ? `<span style="position:absolute;top:-4px;right:-4px;background:#f59e0b;color:white;border-radius:50%;font-size:10px;width:15px;height:15px;display:flex;align-items:center;justify-content:center;box-shadow:0 1px 3px rgba(0,0,0,0.4);border:1.5px solid white;z-index:10;">⏱</span>`
+    : "";
   return L.divIcon({
-    html: `<div style="opacity:${opacity};filter:${filter};transition:opacity 0.2s, filter 0.2s;">${buildMarkerSvg(state, accentColor)}</div>`,
+    html: `<div style="position:relative;opacity:${opacity};filter:${filter};transition:opacity 0.2s, filter 0.2s;">${buildMarkerSvg(state, isUpcoming ? "#f59e0b" : accentColor)}${upcomingBadge}</div>`,
     className: "",
     iconSize: [size, size],
     iconAnchor: [size / 2, size / 2],

@@ -45,27 +45,28 @@ export function Toaster() {
   if (toasts.length === 0) return null;
 
   return (
-    <div className="fixed bottom-4 right-4 z-[9999] flex flex-col gap-2 max-w-sm">
+    <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[9999] flex flex-col items-center gap-2 w-full max-w-sm px-4 pointer-events-none">
       {toasts.map((t) => (
         <div
           key={t.id}
-          className={`flex items-start gap-3 rounded-lg border p-4 shadow-lg animate-in slide-in-from-right ${
+          className={`pointer-events-auto w-full flex items-start gap-3 rounded-2xl border p-3.5 shadow-xl backdrop-blur-md transition-all animate-in slide-in-from-top-3 fade-in duration-200 ${
             t.variant === "destructive"
-              ? "bg-destructive text-destructive-foreground border-destructive"
-              : "bg-card text-card-foreground border-border"
+              ? "bg-destructive/95 text-destructive-foreground border-destructive/80 shadow-destructive/20"
+              : "bg-card/95 text-card-foreground border-border/80 shadow-black/10"
           }`}
         >
-          <div className="flex-1">
-            <p className="text-sm font-semibold">{t.title}</p>
+          <div className="flex-1 min-w-0">
+            <p className="text-xs font-bold leading-tight">{t.title}</p>
             {t.description && (
-              <p className="text-xs opacity-80 mt-0.5">{t.description}</p>
+              <p className="text-[11px] opacity-90 mt-0.5 leading-snug">{t.description}</p>
             )}
           </div>
           <button
             onClick={() => remove(t.id)}
-            className="p-0.5 rounded hover:bg-black/10 transition-colors"
+            className="p-1 rounded-full hover:bg-black/10 transition-colors shrink-0 text-current/70 hover:text-current"
+            aria-label="Dismiss notification"
           >
-            <X className="h-4 w-4" />
+            <X className="h-3.5 w-3.5" />
           </button>
         </div>
       ))}

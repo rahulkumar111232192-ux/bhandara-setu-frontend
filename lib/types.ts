@@ -90,7 +90,7 @@ export interface AuthResponse {
 export type SortOption = "newest" | "nearest" | "rating" | "views";
 
 export interface FilterState {
-  status: ("live" | "ended" | "archived")[];
+  status: ("live" | "upcoming" | "ended")[];
   category: PostCategory[];
   verifiedOnly: boolean;
   hasImage: boolean;

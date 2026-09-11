@@ -199,10 +199,12 @@ export default function DarkVectorMap({
         bhandara.category && CATEGORY_MAP[bhandara.category]
           ? CATEGORY_MAP[bhandara.category].color
           : undefined;
+      const isUpcoming = Boolean(bhandara.isUpcoming || bhandara.status?.toLowerCase() === "upcoming");
       const iconHtml = createBhandaraIcon(
         markerState,
         catColor,
-        bhandara.isLive
+        bhandara.isLive,
+        isUpcoming
       ).options.html as string;
 
       const el = document.createElement("div");

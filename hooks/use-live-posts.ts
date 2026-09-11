@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import type { Bhandara } from "@/lib/types";
-import { apiFetch } from "@/lib/api";
+import { apiFetch, getApiBaseUrl } from "@/lib/api";
 
 type PostEvent = { id: number } & Partial<Bhandara>;
 
@@ -14,8 +14,6 @@ interface UseLivePostsReturn {
   addPost: (post: Bhandara) => void;
 }
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "");
-const SSE_URL = `${API_URL || ""}/api/events/stream`;
 const RECONNECT_DELAY_MS = 3000;
 
 /**
@@ -31,7 +29,7 @@ const RECONNECT_DELAY_MS = 3000;
  */
 const POSTS_CACHE_KEY = "bhandara_posts_cache";
 
-export function useLivePosts(view: string = "live"): UseLivePostsReturn {
+export function useLivePosts(view: string = "all"): UseLivePostsReturn {
   const [posts, setPosts] = useState<Bhandara[]>(() => {
     if (typeof window !== "undefined") {
       try {
@@ -53,19 +51,25 @@ export function useLivePosts(view: string = "live"): UseLivePostsReturn {
 
     const load = async () => {
       try {
-        // If we don't have cached data, show initial loading state
         if (posts.length === 0) setLoading(true);
 
         const res = await apiFetch(`/api/posts?view=${view}`);
+        if (!res.ok) {
+          throw new Error(`Server returned status ${res.status}`);
+        }
         const data = await res.json();
         if (!cancelled && data.status === 200 && Array.isArray(data.data)) {
           setPosts(data.data);
+          setError(null);
           try {
             localStorage.setItem(`${POSTS_CACHE_KEY}_${view}`, JSON.stringify(data.data));
           } catch {}
         }
-      } catch {
-        if (!cancelled && posts.length === 0) setError("Failed to load posts.");
+      } catch (err: any) {
+        console.warn("Could not load posts from server:", err?.message);
+        if (!cancelled) {
+          setError("Server is offline or unreachable. Listings cannot be loaded or updated.");
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -79,7 +83,8 @@ export function useLivePosts(view: string = "live"): UseLivePostsReturn {
   const connect = useCallback(() => {
     if (esRef.current) esRef.current.close();
 
-    const es = new EventSource(SSE_URL);
+    const sseUrl = `${getApiBaseUrl()}/api/events/stream`;
+    const es = new EventSource(sseUrl);
     esRef.current = es;
 
     es.addEventListener("post:updated", (e) => {
@@ -88,9 +93,7 @@ export function useLivePosts(view: string = "live"): UseLivePostsReturn {
         const idx = prev.findIndex((p) => p.id === updated.id);
         let next: Bhandara[];
         if (idx === -1) {
-          next = updated.isLive ? [updated, ...prev] : prev;
-        } else if (!updated.isLive && view === "live") {
-          next = prev.filter((p) => p.id !== updated.id);
+          next = [updated, ...prev];
         } else {
           next = [...prev];
           next[idx] = { ...next[idx], ...updated };
@@ -105,7 +108,7 @@ export function useLivePosts(view: string = "live"): UseLivePostsReturn {
     es.addEventListener("post:expired", (e) => {
       const { id }: { id: number } = JSON.parse(e.data);
       setPosts((prev) => {
-        const next = view === "live" ? prev.filter((p) => p.id !== id) : prev;
+        const next = view === "live" ? prev.filter((p) => p.id !== id) : prev.map((p) => p.id === id ? { ...p, isLive: false, status: "ended" } : p);
         try {
           localStorage.setItem(`${POSTS_CACHE_KEY}_${view}`, JSON.stringify(next));
         } catch {}

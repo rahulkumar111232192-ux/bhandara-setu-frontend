@@ -9,6 +9,7 @@ import {
   Loader2,
   UtensilsCrossed,
   ImagePlus,
+  Camera,
   UserCircle2,
   CheckCircle2,
   Clock,
@@ -91,9 +92,7 @@ export function SubmitForm() {
   const [submitting, setSubmitting] = useState(false);
   const [loadingEdit, setLoadingEdit] = useState(false);
   const [uploadingImage, setUploadingImage] = useState(false);
-  const [previewImage, setPreviewImage] = useState<string | null>(null);
-  const [uploadedImageUrl, setUploadedImageUrl] = useState<string | null>(null);
-  const [uploadedImageFileId, setUploadedImageFileId] = useState<string | null>(null);
+  const [imagesList, setImagesList] = useState<Array<{ url: string; fileId?: string }>>([]);
   const [hasManualAddress, setHasManualAddress] = useState(false);
 
   const { user } = useAuth();
@@ -161,8 +160,8 @@ export function SubmitForm() {
               setHasManualAddress(true);
             }
             if (post.imageUrl) {
-              setPreviewImage(post.imageUrl);
-              setUploadedImageUrl(post.imageUrl);
+              const urls = post.imageUrl.split(",").map((u: string) => u.trim()).filter(Boolean);
+              setImagesList(urls.map((url: string) => ({ url })));
             }
           }
         }
@@ -198,8 +197,8 @@ export function SubmitForm() {
           setLocation({ lat: draft.latitude, lng: draft.longitude });
         }
         if (draft.imageUrl) {
-          setPreviewImage(draft.imageUrl);
-          setUploadedImageUrl(draft.imageUrl);
+          const urls = draft.imageUrl.split(",").map((u: string) => u.trim()).filter(Boolean);
+          setImagesList(urls.map((url: string) => ({ url })));
         }
         toast({
           title: "Draft restored",
@@ -256,76 +255,115 @@ export function SubmitForm() {
 
   const handleUseCurrentLocation = (e: React.MouseEvent) => {
     e.preventDefault();
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          setLocation({
-            lat: position.coords.latitude,
-            lng: position.coords.longitude,
-          });
-          setHasManualAddress(false);
+
+    if (typeof navigator === "undefined" || !navigator.geolocation) {
+      toast({
+        title: "📍 Geolocation Unavailable",
+        description: "Your browser does not support geolocation. Please tap on the map to pin your location.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const isInsecureLan =
+      typeof window !== "undefined" &&
+      !window.isSecureContext &&
+      window.location.hostname !== "localhost" &&
+      window.location.hostname !== "127.0.0.1";
+
+    toast({
+      title: "🛰️ Requesting GPS…",
+      description: "Acquiring your precise physical location.",
+    });
+
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        setLocation({
+          lat: position.coords.latitude,
+          lng: position.coords.longitude,
+        });
+        setHasManualAddress(false);
+        toast({
+          title: "📍 GPS Location Updated",
+          description: "Map centered to your precise physical coordinates.",
+        });
+      },
+      (err) => {
+        if (isInsecureLan) {
           toast({
-            title: "Location Updated",
-            description: "Map centered to your location.",
-          });
-        },
-        () => {
-          toast({
-            title: "Error",
-            description: "Location access denied.",
+            title: "📍 Mobile HTTP Restriction",
+            description: "Mobile browsers restrict GPS over plain HTTP. Please tap anywhere on the map to place your meal marker.",
             variant: "destructive",
           });
-        },
-        { maximumAge: 30000, timeout: 5000, enableHighAccuracy: true }
-      );
-    }
+        } else if (err.code === err.PERMISSION_DENIED) {
+          toast({
+            title: "📍 Location Blocked",
+            description: "Location permission was blocked. Please tap directly on the map to set your location.",
+            variant: "destructive",
+          });
+        } else if (err.code === err.POSITION_UNAVAILABLE) {
+          toast({
+            title: "📍 Device GPS Off",
+            description: "Your phone's GPS is switched off. Please turn it on or tap on the map to pin location.",
+            variant: "destructive",
+          });
+        } else {
+          toast({
+            title: "📍 GPS Timed Out",
+            description: "Could not acquire GPS fix in time. Please tap on the map to set location.",
+            variant: "destructive",
+          });
+        }
+      },
+      { maximumAge: 0, timeout: 12000, enableHighAccuracy: true }
+    );
   };
 
-  const handleUploadImage = async (file: File) => {
-    if (!file) return;
-
+  const handleUploadImages = async (files: FileList | File[]) => {
+    if (!files || files.length === 0) return;
     setUploadingImage(true);
-    setPreviewImage(URL.createObjectURL(file));
 
     try {
       const authResponse = await apiFetch("/api/uploads/auth");
       if (!authResponse.ok) {
         throw new Error("Unable to fetch upload authorization.");
       }
-
       const authData = await authResponse.json();
 
-      const formData = new FormData();
-      formData.append("file", file);
-      formData.append("fileName", file.name || `bhandara-${Date.now()}`);
-      formData.append("useUniqueFileName", "true");
-      formData.append("folder", authData.folder || "/temp");
-      formData.append("token", authData.token);
-      formData.append("expire", String(authData.expire));
-      formData.append("signature", authData.signature);
-      formData.append("publicKey", authData.publicKey);
+      const newUploaded: Array<{ url: string; fileId?: string }> = [];
 
-      const uploadResponse = await fetch("https://upload.imagekit.io/api/v1/files/upload", {
-        method: "POST",
-        body: formData,
-      });
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        const formData = new FormData();
+        formData.append("file", file);
+        formData.append("fileName", file.name || `bhandara-${Date.now()}-${i}`);
+        formData.append("useUniqueFileName", "true");
+        formData.append("folder", authData.folder || "/temp");
+        formData.append("token", authData.token);
+        formData.append("expire", String(authData.expire));
+        formData.append("signature", authData.signature);
+        formData.append("publicKey", authData.publicKey);
 
-      const uploadResult = await uploadResponse.json();
-      if (!uploadResponse.ok) {
-        throw new Error(uploadResult.message || "Image upload failed.");
+        const uploadResponse = await fetch("https://upload.imagekit.io/api/v1/files/upload", {
+          method: "POST",
+          body: formData,
+        });
+
+        const uploadResult = await uploadResponse.json();
+        if (!uploadResponse.ok) {
+          throw new Error(uploadResult.message || "Image upload failed.");
+        }
+
+        const imageUrl = uploadResult.url || uploadResult.thumbnailUrl;
+        if (imageUrl) {
+          newUploaded.push({ url: imageUrl, fileId: uploadResult.fileId });
+        }
       }
 
-      const imageUrl = uploadResult.url || uploadResult.thumbnailUrl;
-      if (!imageUrl) {
-        throw new Error("Image upload did not return a valid url.");
-      }
-
-      setUploadedImageUrl(imageUrl);
-      setUploadedImageFileId(uploadResult.fileId || null);
-      setPreviewImage(imageUrl);
+      setImagesList((prev) => [...prev, ...newUploaded]);
       toast({
-        title: "Image ready",
-        description: "Your photo has been uploaded successfully.",
+        title: "📸 Photos Uploaded",
+        description: `${newUploaded.length} photo${newUploaded.length > 1 ? "s" : ""} added to listing.`,
       });
     } catch (error: any) {
       toast({
@@ -333,21 +371,19 @@ export function SubmitForm() {
         description: error?.message || "Something went wrong while uploading the image.",
         variant: "destructive",
       });
-      setPreviewImage(null);
-      setUploadedImageUrl(null);
-      setUploadedImageFileId(null);
     } finally {
       setUploadingImage(false);
     }
   };
 
-  const removeImage = () => {
-    setPreviewImage(null);
-    setUploadedImageUrl(null);
-    setUploadedImageFileId(null);
+  const removeImageAt = (index: number) => {
+    setImagesList((prev) => prev.filter((_, i) => i !== index));
   };
 
   const onSubmit = async (data: FormData) => {
+    const allImageUrls = imagesList.map((img) => img.url).join(",");
+    const primaryFileId = imagesList.find((img) => img.fileId)?.fileId || null;
+
     if (!user || user.isAnonymous) {
       try {
         sessionStorage.setItem(
@@ -356,7 +392,7 @@ export function SubmitForm() {
             ...data,
             latitude: location.lat,
             longitude: location.lng,
-            imageUrl: uploadedImageUrl || previewImage || "",
+            imageUrl: allImageUrls,
           })
         );
       } catch {}
@@ -385,11 +421,11 @@ export function SubmitForm() {
         latitude: location.lat,
         longitude: location.lng,
         organizerBio: data.isOrganizing ? data.organizerBio || "" : "",
-        imageUrl: uploadedImageUrl || previewImage || "",
+        imageUrl: allImageUrls,
       };
 
-      if (uploadedImageFileId) {
-        payload.imageFileId = uploadedImageFileId;
+      if (primaryFileId) {
+        payload.imageFileId = primaryFileId;
       }
 
       let res;
@@ -416,7 +452,7 @@ export function SubmitForm() {
                 ...data,
                 latitude: location.lat,
                 longitude: location.lng,
-                imageUrl: uploadedImageUrl || previewImage || "",
+                imageUrl: allImageUrls,
               })
             );
           } catch {}
@@ -630,54 +666,93 @@ export function SubmitForm() {
             </div>
 
             <div className="space-y-3">
-              <Label htmlFor="image">Upload image</Label>
-              <label
-                htmlFor="image"
-                className="flex cursor-pointer flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-primary/30 bg-gradient-to-br from-primary/10 via-background/50 to-muted/50 p-5 text-center shadow-sm transition hover:border-primary/60 hover:bg-primary/10"
-              >
-                <div className="rounded-full bg-primary/10 p-3 text-primary">
-                  <ImagePlus className="h-6 w-6" />
-                </div>
-                <div>
-                  <p className="text-sm font-semibold">Drop a photo or tap to browse</p>
-                  <p className="mt-1 text-xs text-muted-foreground">PNG, JPG, and WEBP are supported</p>
-                </div>
-                <input
-                  id="image"
-                  type="file"
-                  accept="image/*"
-                  className="hidden"
-                  onChange={(event) => {
-                    const file = event.target.files?.[0];
-                    if (!file) return;
-                    void handleUploadImage(file);
-                  }}
-                />
-              </label>
+              <Label className="flex items-center justify-between">
+                <span>Photos ({imagesList.length})</span>
+                <span className="text-[11px] text-muted-foreground">Direct Camera or Gallery</span>
+              </Label>
 
-              {(uploadingImage || previewImage) && (
-                <div className="overflow-hidden rounded-2xl border border-border/50 bg-background/50 shadow-sm">
-                  {previewImage ? (
-                    <div className="relative">
-                      <img
-                        src={previewImage}
-                        alt="Preview"
-                        className="h-56 w-full object-cover"
-                      />
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                {/* 1. Direct Camera Capture for Mobile Users */}
+                <label
+                  htmlFor="camera-capture"
+                  className="flex cursor-pointer items-center justify-center gap-3 rounded-2xl border border-dashed border-primary/50 bg-primary/10 hover:bg-primary/15 p-4 text-center transition-all group shadow-xs"
+                >
+                  <div className="p-2.5 rounded-xl bg-primary/20 text-primary group-hover:scale-110 transition-transform">
+                    <Camera className="h-6 w-6" />
+                  </div>
+                  <div className="text-left">
+                    <p className="text-xs font-bold text-foreground">Take Photo (Camera)</p>
+                    <p className="text-[10px] text-muted-foreground">Click directly via camera</p>
+                  </div>
+                  <input
+                    id="camera-capture"
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    className="hidden"
+                    onChange={(e) => {
+                      if (e.target.files && e.target.files.length > 0) {
+                        void handleUploadImages(e.target.files);
+                        e.target.value = "";
+                      }
+                    }}
+                  />
+                </label>
+
+                {/* 2. Choose from Gallery / Files */}
+                <label
+                  htmlFor="gallery-upload"
+                  className="flex cursor-pointer items-center justify-center gap-3 rounded-2xl border border-dashed border-border/80 bg-muted/30 hover:bg-muted/50 p-4 text-center transition-all group shadow-xs"
+                >
+                  <div className="p-2.5 rounded-xl bg-muted text-foreground group-hover:scale-110 transition-transform">
+                    <ImagePlus className="h-6 w-6 text-primary" />
+                  </div>
+                  <div className="text-left">
+                    <p className="text-xs font-bold text-foreground">Choose from Gallery</p>
+                    <p className="text-[10px] text-muted-foreground">Select multiple photos</p>
+                  </div>
+                  <input
+                    id="gallery-upload"
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    className="hidden"
+                    onChange={(e) => {
+                      if (e.target.files && e.target.files.length > 0) {
+                        void handleUploadImages(e.target.files);
+                        e.target.value = "";
+                      }
+                    }}
+                  />
+                </label>
+              </div>
+
+              {uploadingImage && (
+                <div className="flex items-center justify-center gap-2 py-4 text-xs font-medium text-primary glass rounded-xl">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Uploading photo to server...
+                </div>
+              )}
+
+              {/* Photo thumbnails row */}
+              {imagesList.length > 0 && (
+                <div className="flex gap-2.5 overflow-x-auto pb-2 scrollbar-thin pt-1">
+                  {imagesList.map((img, idx) => (
+                    <div key={idx} className="relative shrink-0 w-24 h-24 rounded-xl overflow-hidden border border-border shadow-xs group">
+                      <img src={img.url} alt={`Upload ${idx + 1}`} className="w-full h-full object-cover" />
                       <button
                         type="button"
-                        onClick={removeImage}
-                        className="absolute right-3 top-3 rounded-full bg-background/80 p-2 text-foreground shadow-sm hover:bg-background"
+                        onClick={() => removeImageAt(idx)}
+                        className="absolute top-1 right-1 p-1 rounded-full bg-black/70 text-white hover:bg-black transition-colors"
+                        title="Remove photo"
                       >
-                        <X className="h-4 w-4" />
+                        <X className="h-3 w-3" />
                       </button>
+                      <span className="absolute bottom-1 left-1 bg-black/60 text-white text-[9px] font-bold px-1 rounded">
+                        {idx + 1}
+                      </span>
                     </div>
-                  ) : (
-                    <div className="flex items-center justify-center gap-2 px-4 py-6 text-sm text-muted-foreground">
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      Uploading image...
-                    </div>
-                  )}
+                  ))}
                 </div>
               )}
             </div>

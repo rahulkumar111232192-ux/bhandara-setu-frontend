@@ -1,4 +1,4 @@
-﻿import React from 'react';
+import React from 'react';
 import ReactDOMServer from 'react-dom/server';
 import { Bhandara, CATEGORY_MAP } from '@/lib/types';
 import { cn } from '@/lib/utils';
@@ -53,7 +53,7 @@ export function MarkerPopupPreview({ bhandara, userLocation }: MarkerPopupPrevie
       {bhandara.imageUrl && (
         <div className="h-28 w-full bg-muted relative">
           <img 
-            src={bhandara.imageUrl} 
+            src={bhandara.imageUrl.split(",")[0].trim()} 
             alt={bhandara.title} 
             className="w-full h-full object-cover"
           />
@@ -86,10 +86,25 @@ export function MarkerPopupPreview({ bhandara, userLocation }: MarkerPopupPrevie
           <div className="flex items-center gap-1.5">
             <span className={cn(
               "w-2 h-2 rounded-full",
-              bhandara.isLive ? "bg-green-500 animate-pulse" : "bg-gray-400"
+              bhandara.isLive
+                ? "bg-green-500 animate-pulse"
+                : bhandara.isUpcoming || bhandara.status?.toLowerCase() === "upcoming"
+                ? "bg-amber-500"
+                : "bg-gray-400"
             )} />
-            <span className={cn("text-[11px] font-semibold", bhandara.isLive ? "text-green-600" : "text-muted-foreground")}>
-              {bhandara.isLive ? "Live Now" : "Ended"}
+            <span className={cn(
+              "text-[11px] font-semibold",
+              bhandara.isLive
+                ? "text-green-600"
+                : bhandara.isUpcoming || bhandara.status?.toLowerCase() === "upcoming"
+                ? "text-amber-600"
+                : "text-muted-foreground"
+            )}>
+              {bhandara.isLive
+                ? "Live Now"
+                : bhandara.isUpcoming || bhandara.status?.toLowerCase() === "upcoming"
+                ? "Upcoming"
+                : "Ended"}
             </span>
           </div>
 
