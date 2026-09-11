@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { MessageCircle, Send, Trash2, Reply, ChevronDown, ChevronUp } from "lucide-react";
-import { apiFetch } from "@/lib/api";
+import { apiFetch, getApiBaseUrl } from "@/lib/api";
 import { useAuth } from "@/hooks/use-auth";
 import Link from "next/link";
 
@@ -192,7 +192,7 @@ export default function CommentSection({ postId, postOwnerId }: CommentSectionPr
 
   const fetchComments = useCallback(async () => {
     try {
-      const res = await fetch(`/api/posts/${postId}/comments`, { credentials: "include" });
+      const res = await apiFetch(`/api/posts/${postId}/comments`);
       const data = await res.json();
       if (data.status === 200) setComments(data.data);
     } catch {} finally {
@@ -204,7 +204,8 @@ export default function CommentSection({ postId, postOwnerId }: CommentSectionPr
     fetchComments();
 
     // Listen for live comment events on SSE stream
-    const es = new EventSource("/api/events/stream");
+    const apiUrl = getApiBaseUrl();
+    const es = new EventSource(`${apiUrl}/api/events/stream`);
     esRef.current = es;
 
     es.addEventListener("comment:new", (e) => {
