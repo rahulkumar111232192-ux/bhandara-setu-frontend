@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { MessageCircle, Send, Trash2, Reply, ChevronDown, ChevronUp, RefreshCw } from "lucide-react";
-import { apiFetch, getApiBaseUrl } from "@/lib/api";
+import { apiFetch } from "@/lib/api";
 import { useAuth } from "@/hooks/use-auth";
+import { useServerEvent } from "@/hooks/use-server-event";
 import { toast } from "@/components/Toaster";
 import Link from "next/link";
 
@@ -25,6 +26,21 @@ interface CommentSectionProps {
   postId: number;
   postOwnerId: number | null;
 }
+
+const mergeComment = (incoming: CommentData, previous?: CommentData): CommentData => {
+  const previousReplies = new Map((previous?.replies ?? []).map((reply) => [reply.id, reply]));
+  const incomingReplyIds = new Set(incoming.replies.map((reply) => reply.id));
+  const replies = [
+    ...incoming.replies.map((reply) => mergeComment(reply, previousReplies.get(reply.id))),
+    ...(previous?.replies ?? []).filter((reply) => !incomingReplyIds.has(reply.id)),
+  ];
+  return {
+    ...previous,
+    ...incoming,
+    replies,
+    replyCount: Math.max(incoming.replyCount, previous?.replyCount ?? 0, replies.length),
+  };
+};
 
 function timeAgo(dateStr: string) {
   const diff = (Date.now() - new Date(dateStr).getTime()) / 1000;
@@ -199,7 +215,6 @@ export default function CommentSection({ postId, postOwnerId }: CommentSectionPr
   const [loading, setLoading] = useState(true);
   const [text, setText] = useState("");
   const [submitting, setSubmitting] = useState(false);
-  const esRef = useRef<EventSource | null>(null);
 
   const currentUserId = user && !user.isAnonymous ? (user.id as number) : null;
 
@@ -207,54 +222,69 @@ export default function CommentSection({ postId, postOwnerId }: CommentSectionPr
     try {
       const res = await apiFetch(`/api/posts/${postId}/comments`);
       const data = await res.json();
-      if (data.status === 200) setComments(data.data);
-    } catch {} finally {
+      if (data.status === 200) {
+        setComments((previous) => {
+          const incoming = data.data as CommentData[];
+          const previousById = new Map(previous.map((comment) => [comment.id, comment]));
+          const incomingIds = new Set(incoming.map((comment) => comment.id));
+          return [
+            ...previous.filter((comment) => !incomingIds.has(comment.id)),
+            ...incoming.map((comment) => mergeComment(comment, previousById.get(comment.id))),
+          ];
+        });
+      }
+    } catch (error) {
+      console.error("Could not load comments:", error);
+    } finally {
       setLoading(false);
     }
   }, [postId]);
 
   useEffect(() => {
-    fetchComments();
+    void fetchComments();
+  }, [fetchComments]);
 
-    // Listen for live comment events on SSE stream
-    const apiUrl = getApiBaseUrl();
-    const es = new EventSource(`${apiUrl}/api/events/stream`);
-    esRef.current = es;
+  const handleCommentAdded = useCallback((event: MessageEvent<string>) => {
+    const comment: CommentData = JSON.parse(event.data);
+    if (comment.postId !== postId) return;
+    if (comment.parentId === null) {
+      setComments((previous) => previous.some((item) => item.id === comment.id)
+        ? previous
+        : [comment, ...previous]);
+      return;
+    }
+    setComments((previous) => previous.map((parent) => {
+      if (parent.id !== comment.parentId) return parent;
+      const alreadyPresent = parent.replies.some((reply) => reply.id === comment.id);
+      return {
+        ...parent,
+        replies: alreadyPresent
+          ? parent.replies.map((reply) => reply.id === comment.id ? comment : reply)
+          : [...parent.replies, comment],
+        replyCount: alreadyPresent ? parent.replyCount : parent.replyCount + 1,
+      };
+    }));
+  }, [postId]);
 
-    es.addEventListener("comment:new", (e) => {
-      const c: CommentData = JSON.parse(e.data);
-      if (c.postId !== postId) return;
-      if (c.parentId === null) {
-        // Top-level comment
-        setComments((prev) => {
-          if (prev.some((x) => x.id === c.id)) return prev;
-          return [c, ...prev];
-        });
-      } else {
-        // Reply — insert under parent
-        setComments((prev) =>
-          prev.map((p) =>
-            p.id === c.parentId
-              ? { ...p, replies: [...(p.replies ?? []).filter((r) => r.id !== c.id), c], replyCount: p.replyCount + 1 }
-              : p
-          )
-        );
-      }
-    });
+  const handleCommentDeleted = useCallback((event: MessageEvent<string>) => {
+    const { postId: eventPostId, commentId }: { postId: number; commentId: number } = JSON.parse(event.data);
+    if (eventPostId !== postId) return;
+    setComments((previous) =>
+      previous.map((comment) =>
+        comment.id === commentId
+          ? { ...comment, isDeleted: true, text: null, user: null }
+          : {
+            ...comment,
+            replies: comment.replies.map((reply) => reply.id === commentId
+              ? { ...reply, isDeleted: true, text: null, user: null }
+              : reply),
+          }
+      )
+    );
+  }, [postId]);
 
-    es.addEventListener("comment:deleted", (e) => {
-      const { commentId }: { postId: number; commentId: number } = JSON.parse(e.data);
-      setComments((prev) =>
-        prev.map((c) =>
-          c.id === commentId
-            ? { ...c, isDeleted: true, text: null, user: null }
-            : { ...c, replies: c.replies.map((r) => r.id === commentId ? { ...r, isDeleted: true, text: null, user: null } : r) }
-        )
-      );
-    });
-
-    return () => es.close();
-  }, [postId, fetchComments]);
+  useServerEvent("comment:new", handleCommentAdded);
+  useServerEvent("comment:deleted", handleCommentDeleted);
 
   const handleSubmit = async () => {
     if (!text.trim() || submitting) return;
@@ -270,7 +300,9 @@ export default function CommentSection({ postId, postOwnerId }: CommentSectionPr
       });
       const data = await res.json();
       if (data.status === 201) {
-        setComments((prev) => [data.data, ...prev]);
+        setComments((prev) => prev.some((comment) => comment.id === data.data.id)
+          ? prev
+          : [data.data, ...prev]);
         setText("");
         toast({ title: "Comment Posted!", description: "Your update has been shared with the community." });
       } else {
@@ -327,11 +359,17 @@ export default function CommentSection({ postId, postOwnerId }: CommentSectionPr
               currentUserId={currentUserId}
               onReplyPosted={(reply) =>
                 setComments((prev) =>
-                  prev.map((p) =>
-                    p.id === reply.parentId
-                      ? { ...p, replies: [...p.replies.filter((r) => r.id !== reply.id), reply], replyCount: p.replyCount + 1 }
-                      : p
-                  )
+                  prev.map((parent) => {
+                    if (parent.id !== reply.parentId) return parent;
+                    const exists = parent.replies.some((item) => item.id === reply.id);
+                    return {
+                      ...parent,
+                      replies: exists
+                        ? parent.replies.map((item) => item.id === reply.id ? reply : item)
+                        : [...parent.replies, reply],
+                      replyCount: exists ? parent.replyCount : parent.replyCount + 1,
+                    };
+                  })
                 )
               }
               onDeleted={(id) =>

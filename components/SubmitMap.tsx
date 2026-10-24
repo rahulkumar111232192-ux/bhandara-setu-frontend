@@ -72,6 +72,7 @@ export default function SubmitMap({ location, onMapClick }: SubmitMapProps) {
           center={location}
           zoom={13}
           singleMarker={location}
+          onSingleMarkerDrag={onMapClick}
           onMapClick={onMapClick}
         />
       </div>
@@ -90,11 +91,22 @@ export default function SubmitMap({ location, onMapClick }: SubmitMapProps) {
       >
         <TileLayer {...lightTileLayer} />
         <MapAttribution />
-        <Marker position={position} icon={createBhandaraIcon()} />
+        <Marker
+          position={position}
+          icon={createBhandaraIcon("selected")}
+          draggable
+          riseOnHover
+          eventHandlers={{
+            dragend: (event) => {
+              const { lat, lng } = event.target.getLatLng();
+              onMapClick({ lat, lng });
+            },
+          }}
+          title="Selected meal location. Drag to adjust."
+        />
         <MapEvents onMapClick={onMapClick} />
         <Recenter location={location} />
       </MapContainer>
     </div>
   );
 }
-

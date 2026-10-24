@@ -1,8 +1,13 @@
 import type { NextConfig } from "next";
 
+const basePath = process.env.GITHUB_ACTIONS ? "/bhandara-setu-frontend" : "";
+
 const nextConfig = {
   output: "export",
-  basePath: process.env.GITHUB_ACTIONS ? "/bhandara-setu-frontend" : "",
+  basePath,
+  env: {
+    NEXT_PUBLIC_BASE_PATH: basePath,
+  },
   images: {
     unoptimized: true,
     remotePatterns: [
@@ -15,4 +20,3 @@ const nextConfig = {
 };
 
 export default nextConfig;
-

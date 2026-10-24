@@ -26,10 +26,11 @@ import { RevolvingTitle } from "@/components/RevolvingTitle";
 import LocationPermissionModal, { LocationErrorType } from "@/components/LocationPermissionModal";
 import { useLivePosts } from "@/hooks/use-live-posts";
 import { useAuth } from "@/hooks/use-auth";
+import { useServerEvent } from "@/hooks/use-server-event";
 import { useTheme } from "@/components/ThemeProvider";
 import { toast } from "@/components/Toaster";
 import { cn } from "@/lib/utils";
-import { apiFetch, getApiBaseUrl } from "@/lib/api";
+import { apiFetch } from "@/lib/api";
 import { isReminderSet, markReminderFired } from "@/lib/reminders";
 import {
   getNearbyAlertsEnabled,
@@ -66,6 +67,8 @@ export default function Home() {
 
   /* ── Search / filter / sort ── */
   const [searchTerm, setSearchTerm] = useState("");
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [mobileSnap, setMobileSnap] = useState<"min" | "half" | "max">("half");
   const [filters, setFilters] = useState<FilterState>(DEFAULT_FILTERS);
   const [sortBy, setSortBy] = useState<SortOption>("newest");
 
@@ -158,21 +161,60 @@ export default function Home() {
   /* ── Notifications & Live Proximity Dispatch ── */
   const [notificationsEnabled, setNotificationsEnabled] = useState(false);
 
+  // Helper for web-push keys
+  const urlBase64ToUint8Array = (base64String: string) => {
+    const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+    const base64 = (base64String + padding).replace(/\-/g, "+").replace(/_/g, "/");
+    const rawData = window.atob(base64);
+    const outputArray = new Uint8Array(rawData.length);
+    for (let i = 0; i < rawData.length; ++i) {
+      outputArray[i] = rawData.charCodeAt(i);
+    }
+    return outputArray;
+  };
+
   // Sync preference to server whenever location or auth state updates
   const syncNotificationPreference = useCallback(async (coords: [number, number]) => {
     try {
       const token = getVisitorToken();
-      await apiFetch("/api/notifications/subscribe", {
+      let pushSubscription = null;
+      const vapidPublicKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
+
+      // Try to get Push Subscription for offline background notifications
+      if ("serviceWorker" in navigator && "PushManager" in window) {
+        try {
+          const basePath = process.env.NEXT_PUBLIC_BASE_PATH || "";
+          const reg = await navigator.serviceWorker.register(`${basePath}/sw.js`);
+          pushSubscription = await reg.pushManager.getSubscription();
+          if (!pushSubscription && vapidPublicKey) {
+            pushSubscription = await reg.pushManager.subscribe({
+              userVisibleOnly: true,
+              applicationServerKey: urlBase64ToUint8Array(vapidPublicKey),
+            });
+          }
+        } catch (err) {
+          console.warn("Could not register for background push notifications", err);
+        }
+      }
+
+      const response = await apiFetch("/api/notifications/subscribe", {
         method: "POST",
         body: JSON.stringify({
           latitude: coords[0],
           longitude: coords[1],
           radiusKm: 10,
           token,
+          pushSubscription: pushSubscription?.toJSON() || null,
         }),
       });
+      if (!response.ok) {
+        throw new Error(`Could not save notification preference (${response.status})`);
+      }
+      const result = await response.json();
+      return { saved: true, pushEnabled: Boolean(result.pushEnabled) };
     } catch (err) {
       console.warn("Could not sync notification preference", err);
+      return { saved: false, pushEnabled: false };
     }
   }, []);
 
@@ -223,10 +265,78 @@ export default function Home() {
     } catch {}
   }, []);
 
+  const handleNearbyNotification = useCallback((event: MessageEvent<string>) => {
+    try {
+      const payload = JSON.parse(event.data);
+      if (!payload?.postId || !getNearbyAlertsEnabled()) return;
+      if (hasNotificationBeenSent(payload.postId, "nearby")) return;
+
+      let formattedDist = "";
+      if (userLocation && payload.latitude && payload.longitude) {
+        const meters = calculateDistanceMeters(
+          userLocation[0],
+          userLocation[1],
+          Number(payload.latitude),
+          Number(payload.longitude)
+        );
+        if (meters > 10000) return;
+        formattedDist = formatDistance(meters);
+      }
+
+      const isLive = payload.status === "live" || payload.isLive;
+      const distText = formattedDist ? ` (~${formattedDist})` : "";
+      const title = isLive
+        ? `🔴 Live Food Alert: ${payload.title} 🛕`
+        : `⏳ Upcoming Food Drive: ${payload.title}`;
+      const body = isLive
+        ? `Live Now${distText} • ${payload.address || "Community meal"} is serving food!`
+        : `${formatTimeRemaining(payload.startTime)}${distText} • ${payload.address || "Community meal scheduled"}`;
+
+      markNotificationSent(payload.postId, "nearby");
+      showNativeNotification(title, body, `/?post=${payload.postId}`);
+      toast({ title, description: body });
+    } catch (error) {
+      console.warn("notification:nearby error", error);
+    }
+  }, [userLocation, showNativeNotification]);
+
+  const handlePostReminder = useCallback((event: MessageEvent<string>) => {
+    try {
+      const updated = JSON.parse(event.data);
+      if (!updated?.id || !updated.isLive || !isReminderSet(updated.id)) return;
+      if (hasNotificationBeenSent(updated.id, "reminder")) return;
+
+      markReminderFired(updated.id);
+      let distText = "";
+      if (userLocation && updated.latitude && updated.longitude) {
+        const meters = calculateDistanceMeters(
+          userLocation[0],
+          userLocation[1],
+          Number(updated.latitude),
+          Number(updated.longitude)
+        );
+        distText = ` (~${formatDistance(meters)})`;
+      }
+
+      const title = `🔔 Bhandara Started: ${updated.title} 🍛`;
+      const body = `🔴 Live Now${distText} • ${updated.address || "Serving food now"}! Tap to view details.`;
+      showNativeNotification(title, body, `/?post=${updated.id}`);
+      toast({ title, description: body });
+    } catch (error) {
+      console.warn("post:updated reminder error", error);
+    }
+  }, [userLocation, showNativeNotification]);
+
+  useServerEvent("notification:nearby", handleNearbyNotification);
+  useServerEvent("post:updated", handlePostReminder);
+
   useEffect(() => {
     // Register Service Worker for background & offline notifications
     if (typeof window !== "undefined" && "serviceWorker" in navigator) {
-      navigator.serviceWorker.register("/sw.js").catch(() => {});
+      const basePath = process.env.NEXT_PUBLIC_BASE_PATH || "";
+      navigator.serviceWorker.register(`${basePath}/sw.js`).catch((err) => {
+        console.warn("Could not register the notification service worker", err);
+      });
     }
 
     // Only set enabled if user EXPLICITLY turned on nearby alerts AND browser granted permission
@@ -247,106 +357,10 @@ export default function Home() {
     };
     window.addEventListener("bhandara-alerts-changed", handleAlertsChanged);
 
-    // SSE listener for nearby food distribution broadcasts & transitions using dynamic getApiBaseUrl()
-    const apiUrl = getApiBaseUrl();
-    const es = new EventSource(`${apiUrl}/api/events/stream`);
-
-    es.addEventListener("notification:nearby", (e) => {
-      try {
-        const payload = JSON.parse(e.data);
-        if (!payload || !payload.postId) return;
-
-        // 1. Only alert if user explicitly enabled nearby alerts
-        if (!getNearbyAlertsEnabled()) return;
-
-        // 2. Prevent irritating duplicate alerts
-        if (hasNotificationBeenSent(payload.postId, "nearby")) return;
-
-        // 3. Compute accurate distance from user's live GPS coordinates
-        let formattedDist = "";
-        if (userLocation && payload.latitude && payload.longitude) {
-          const meters = calculateDistanceMeters(
-            userLocation[0],
-            userLocation[1],
-            Number(payload.latitude),
-            Number(payload.longitude)
-          );
-          // If the post is farther than 10km away from user, do not alert
-          if (meters > 10000) return;
-          formattedDist = formatDistance(meters);
-        }
-
-        // 4. Build accurate message based on live vs upcoming status and timing
-        const isLive = payload.status === "live" || payload.isLive;
-        let title = "";
-        let body = "";
-
-        if (isLive) {
-          title = `🔴 Live Food Alert: ${payload.title} 🛕`;
-          const distText = formattedDist ? ` (~${formattedDist})` : "";
-          body = `Live Now${distText} • ${payload.address || "Community meal"} is serving food!`;
-        } else {
-          const timeText = formatTimeRemaining(payload.startTime);
-          title = `⏳ Upcoming Food Drive: ${payload.title}`;
-          const distText = formattedDist ? ` (~${formattedDist})` : "";
-          body = `${timeText}${distText} • ${payload.address || "Community meal scheduled"}`;
-        }
-
-        const postUrl = `/?post=${payload.postId}`;
-
-        // 5. Mark as sent immediately to guarantee deduplication
-        markNotificationSent(payload.postId, "nearby");
-
-        showNativeNotification(title, body, postUrl);
-        toast({ title, description: body });
-      } catch (err) {
-        console.warn("notification:nearby error", err);
-      }
-    });
-
-    es.addEventListener("post:updated", (e) => {
-      try {
-        const updated = JSON.parse(e.data);
-        if (!updated || !updated.id) return;
-
-        // If an upcoming post transitioned to LIVE and user requested a reminder
-        if (updated.isLive && isReminderSet(updated.id)) {
-          // Prevent irritating duplicate alerts
-          if (hasNotificationBeenSent(updated.id, "reminder")) {
-            return;
-          }
-
-          // Mark reminder as fired & remove from active reminder list immediately
-          markReminderFired(updated.id);
-
-          // Calculate distance accurately with user's current GPS location
-          let distText = "";
-          if (userLocation && updated.latitude && updated.longitude) {
-            const meters = calculateDistanceMeters(
-              userLocation[0],
-              userLocation[1],
-              Number(updated.latitude),
-              Number(updated.longitude)
-            );
-            distText = ` (~${formatDistance(meters)})`;
-          }
-
-          const title = `🔔 Bhandara Started: ${updated.title} 🍛`;
-          const body = `🔴 Live Now${distText} • ${updated.address || "Serving food now"}! Tap to view details.`;
-
-          showNativeNotification(title, body, `/?post=${updated.id}`);
-          toast({ title, description: body });
-        }
-      } catch (err) {
-        console.warn("post:updated reminder error", err);
-      }
-    });
-
     return () => {
-      es.close();
       window.removeEventListener("bhandara-alerts-changed", handleAlertsChanged);
     };
-  }, [userLocation, syncNotificationPreference, showNativeNotification]);
+  }, [userLocation, syncNotificationPreference]);
 
   const handleToggleNotifications = async () => {
     if (typeof window === "undefined" || !("Notification" in window)) {
@@ -370,16 +384,28 @@ export default function Home() {
       return;
     }
 
+    // Location is required to turn ON notifications
+    if (!userLocation) {
+      toast({
+        title: "📍 Location Required",
+        description: "Please set your location first so we can find meals near you.",
+      });
+      setLocationModalOpen(true);
+      return;
+    }
+
     // IF NOT ENABLED -> TOGGLE ON!
     if (Notification.permission === "granted") {
       setNearbyAlertsEnabled(true);
       setNotificationsEnabled(true);
-      if (userLocation) {
-        await syncNotificationPreference(userLocation);
-      }
+      const syncResult = await syncNotificationPreference(userLocation);
       toast({
         title: "🔔 Nearby Alerts Turned ON",
-        description: "You'll receive real notifications when free meals start within 10km.",
+        description: !syncResult.saved
+          ? "Could not save your alert preferences. Please try again."
+          : syncResult.pushEnabled
+            ? "You'll receive nearby alerts, including background push notifications."
+            : "Nearby alerts are saved, but background push is unavailable. Keep the app open for alerts.",
       });
       return;
     }
@@ -398,14 +424,19 @@ export default function Home() {
       setNearbyAlertsEnabled(true);
       setNotificationsEnabled(true);
       if ("serviceWorker" in navigator) {
-        navigator.serviceWorker.register("/sw.js").catch(() => {});
+        const basePath = process.env.NEXT_PUBLIC_BASE_PATH || "";
+        navigator.serviceWorker.register(`${basePath}/sw.js`).catch((err) => {
+          console.warn("Could not register the notification service worker", err);
+        });
       }
-      if (userLocation) {
-        await syncNotificationPreference(userLocation);
-      }
+      const syncResult = await syncNotificationPreference(userLocation);
       toast({
         title: "🔔 Nearby Alerts Enabled!",
-        description: "You will receive real alerts when free meals or upcoming bhandaras start in your area.",
+        description: !syncResult.saved
+          ? "Could not save your alert preferences. Please try again."
+          : syncResult.pushEnabled
+            ? "You'll receive nearby alerts, including background push notifications."
+            : "Nearby alerts are saved, but background push is unavailable. Keep the app open for alerts.",
       });
     } else {
       setNearbyAlertsEnabled(false);
@@ -520,7 +551,8 @@ export default function Home() {
 
   /* ── Proactively attempt to acquire real GPS location on site entry ── */
   useEffect(() => {
-    handleLocateMe(true);
+    // Removed automatic aggressive GPS location request on load (Bug 2)
+    // App now waits for user to manually click the locate button.
   }, [handleLocateMe]);
 
   /* ── Fast City / Holy Dham Selection ── */
@@ -716,65 +748,65 @@ export default function Home() {
         </div>
       </div>
 
-      {/* ── FLOATING SEARCH BAR (Quick search right on top of map) ── */}
+      {/* ── COLLAPSIBLE MAP SEARCH ── */}
       <div
         className={cn(
-          "fixed z-[950] transition-all",
+          "fixed z-[1050] transition-all",
           error ? "top-20 sm:top-11" : "top-16 sm:top-4",
-          "left-3 right-3 sm:left-64 sm:right-auto sm:w-80"
+          "left-3 sm:left-64 md:left-[420px]"
         )}
       >
-        <div className="glass flex items-center gap-2 px-3.5 py-2 rounded-2xl shadow-lg border border-border/60 backdrop-blur-md">
-          <Search className="w-4 h-4 text-muted-foreground shrink-0" />
-          <input
-            type="text"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            placeholder="Search food, mandir, langar..."
-            className="bg-transparent text-xs w-full outline-none placeholder:text-muted-foreground/70 text-foreground"
-          />
-          {searchTerm && (
+        {!isSearchOpen ? (
+          <button
+            type="button"
+            onClick={() => setIsSearchOpen(true)}
+            className="relative flex h-10 w-10 items-center justify-center rounded-xl glass shadow-lg border border-border/60 backdrop-blur-md text-muted-foreground hover:text-foreground transition-colors"
+            title="Search meals"
+            aria-label="Open meal search"
+          >
+            <Search className="h-4 w-4" />
+            {searchTerm && <span className="absolute right-2 top-2 h-1.5 w-1.5 rounded-full bg-primary" />}
+          </button>
+        ) : (
+          <div className="glass flex w-[min(20rem,calc(100vw-1.5rem))] items-center gap-2 rounded-2xl border border-border/60 px-3.5 py-2 shadow-lg backdrop-blur-md animate-in fade-in slide-in-from-left-2">
+            <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
+            <input
+              type="text"
+              autoFocus
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") setIsSearchOpen(false);
+              }}
+              placeholder="Search food, mandir, langar..."
+              className="w-full bg-transparent text-xs text-foreground outline-none placeholder:text-muted-foreground/70"
+              aria-label="Search meals"
+            />
             <button
-              onClick={() => setSearchTerm("")}
-              className="text-muted-foreground hover:text-foreground p-0.5"
-              title="Clear search"
+              type="button"
+              onClick={() => {
+                if (searchTerm) setSearchTerm("");
+                else setIsSearchOpen(false);
+              }}
+              className="shrink-0 p-0.5 text-muted-foreground hover:text-foreground"
+              title={searchTerm ? "Clear search" : "Close search"}
+              aria-label={searchTerm ? "Clear search" : "Close search"}
             >
-              <X className="w-3.5 h-3.5" />
+              <X className="h-3.5 w-3.5" />
             </button>
-          )}
-        </div>
+          </div>
+        )}
       </div>
 
       {/* ── LOCATION ALERT / MAP PINNING STATUS BANNER ── */}
-      {!userLocation && !isPickingOnMap && (
-        <div
-          className={cn(
-            "fixed z-[945] transition-all",
-            "top-28 sm:top-16 left-3 right-3 sm:left-64 sm:w-auto md:right-[430px]"
-          )}
-        >
-          <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-2xl bg-amber-500/15 border border-amber-500/40 backdrop-blur-md shadow-lg text-amber-900 dark:text-amber-200 text-xs font-medium animate-in fade-in slide-in-from-top-2">
-            <div className="flex items-center gap-2 truncate">
-              <MapPin className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 animate-bounce" />
-              <span className="truncate">
-                Location required to discover free meals near you.
-              </span>
-            </div>
-            <button
-              onClick={() => handleLocateMe(false)}
-              className="px-2.5 py-1 rounded-xl bg-primary text-primary-foreground font-bold text-[11px] shrink-0 hover:bg-primary/90 transition-transform active:scale-95 shadow-xs"
-            >
-              Set Location
-            </button>
-          </div>
-        </div>
-      )}
+      {/* Removed mandatory location banner (Bug 2) to prevent irritating users.
+          Location is now optional. */}
 
       {isPickingOnMap && (
         <div
           className={cn(
             "fixed z-[945] transition-all",
-            "top-28 sm:top-16 left-3 right-3 sm:left-64 sm:w-auto md:right-[430px]"
+            "top-28 sm:top-16 left-3 right-3 sm:left-64 sm:w-auto md:left-[420px] md:right-4"
           )}
         >
           <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-2xl bg-primary/20 border border-primary/50 backdrop-blur-md shadow-lg text-foreground text-xs font-semibold animate-pulse">
@@ -795,7 +827,7 @@ export default function Home() {
       {/* ── TOP-RIGHT FLOATING ACTION CLUSTER (Theme, Notifications & Profile) ── */}
       <div
         className={cn(
-          "fixed right-3 sm:right-4 md:right-[430px] z-[950] flex items-center gap-2 transition-all",
+          "fixed right-3 sm:right-4 z-[950] flex items-center gap-2 transition-all",
           error ? "top-10 sm:top-11" : "top-3 sm:top-4"
         )}
       >
@@ -862,8 +894,18 @@ export default function Home() {
         )}
       </div>
 
-      {/* ── FLOATING GPS LOCATOR & CREATE POST FAB ── */}
-      <div className="fixed bottom-20 md:bottom-8 right-4 md:right-[430px] z-[950] flex flex-col items-end gap-3 pointer-events-auto">
+      {/* ── FLOATING GPS LOCATOR & CREATE POST FAB (Mobile Only) ── */}
+      <div
+        className="md:hidden fixed right-4 z-[950] flex flex-col items-end gap-3 pointer-events-auto transition-[bottom] duration-300"
+        style={{
+          bottom:
+            mobileSnap === "min"
+              ? "calc(62px + 1rem)"
+              : mobileSnap === "half"
+                ? "calc(48vh + 1rem)"
+                : "calc(min(72vh, 100dvh - 135px) + 1rem)",
+        }}
+      >
         {/* Floating GPS Locator Button */}
         <button
           onClick={() => handleLocateMe(false)}
@@ -874,14 +916,14 @@ export default function Home() {
               ? "border-amber-500 ring-2 ring-amber-500/40 animate-pulse text-amber-600 dark:text-amber-400"
               : isLiveGps
               ? "border-emerald-500/50 text-emerald-600 dark:text-emerald-400"
-              : "border-primary/30 text-primary"
+              : "border-amber-500 text-amber-600 dark:text-amber-400"
           )}
           title={
             !userLocation
               ? "Location required — Tap to locate"
               : isLiveGps
               ? "Live GPS tracking active (tap to re-center)"
-              : "Tap to center on your physical GPS location"
+              : "Showing pinned/saved location (tap to use Live GPS)"
           }
         >
           {locating ? (
@@ -902,6 +944,35 @@ export default function Home() {
         </Link>
       </div>
 
+      {/* Desktop map actions stay outside the feed panel. */}
+      <div className="hidden md:flex fixed right-5 bottom-20 z-[1050] flex-col items-end gap-3 pointer-events-auto">
+        <button
+          type="button"
+          onClick={() => handleLocateMe(false)}
+          disabled={locating}
+          className={cn(
+            "flex h-11 w-11 items-center justify-center rounded-full glass-strong bg-card/95 border shadow-xl transition-all hover:scale-110 active:scale-95",
+            !userLocation
+              ? "border-amber-500 ring-2 ring-amber-500/40 text-amber-600 dark:text-amber-400"
+              : isLiveGps
+                ? "border-emerald-500/50 text-emerald-600 dark:text-emerald-400"
+                : "border-amber-500 text-amber-600 dark:text-amber-400"
+          )}
+          title={isLiveGps ? "Live GPS active — recenter map" : "Use my current location"}
+          aria-label="Use my current location"
+        >
+          {locating ? <Loader2 className="h-5 w-5 animate-spin text-primary" /> : <LocateFixed className="h-5 w-5" />}
+        </button>
+        <Link
+          href="/submit"
+          className="flex items-center gap-2 rounded-full border border-primary-foreground/20 bg-primary px-4 py-2.5 text-xs font-bold text-primary-foreground shadow-2xl transition-all hover:scale-105 hover:bg-primary/90 active:scale-95"
+          title="Share a free meal listing"
+        >
+          <Plus className="h-4 w-4 shrink-0 stroke-[2.5]" />
+          <span>Share Meal</span>
+        </Link>
+      </div>
+
       {/* ── FEED PANEL (Desktop sidebar & Mobile 3-snap shutter with inline filters) ── */}
       <FeedPanel
         bhandaras={filteredBhandaras}
@@ -914,6 +985,10 @@ export default function Home() {
         onFiltersChange={setFilters}
         searchTerm={searchTerm}
         onSearchChange={setSearchTerm}
+        mobileSnap={mobileSnap}
+        onMobileSnapChange={setMobileSnap}
+        sortBy={sortBy}
+        onSortChange={setSortBy}
       />
 
       {/* ── POST DETAIL PANEL (Drawer on desktop, bottom-sheet on mobile with Back button) ── */}
@@ -925,6 +1000,8 @@ export default function Home() {
           updatePost(updated);
           setSelectedBhandara(updated);
         }}
+        userLocation={userLocation}
+        onLocateMe={() => handleLocateMe(false)}
       />
 
       {/* ── LOCATION PERMISSION & DIAGNOSTIC MODAL ── */}

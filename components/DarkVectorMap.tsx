@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useMemo } from "react";
+import { useEffect, useRef, useMemo, useState } from "react";
 import * as maplibregl from "maplibre-gl";
 import type { Bhandara } from "@/lib/types";
 import { CATEGORY_MAP } from "@/lib/types";
@@ -18,6 +18,7 @@ interface DarkVectorMapProps {
   hoveredId?: number | null;
   selectedId?: number | null;
   singleMarker?: { lat: number; lng: number } | null;
+  onSingleMarkerDrag?: (latlng: { lat: number; lng: number }) => void;
   onMapClick?: (latlng: { lat: number; lng: number }) => void;
   className?: string;
 }
@@ -51,6 +52,7 @@ export default function DarkVectorMap({
   hoveredId,
   selectedId,
   singleMarker,
+  onSingleMarkerDrag,
   onMapClick,
   className = "h-full w-full relative overflow-hidden",
 }: DarkVectorMapProps) {
@@ -60,6 +62,7 @@ export default function DarkVectorMap({
   const userMarkerRef = useRef<maplibregl.Marker | null>(null);
   const singleMarkerRef = useRef<maplibregl.Marker | null>(null);
   const popupRef = useRef<maplibregl.Popup | null>(null);
+  const [mapReady, setMapReady] = useState(false);
 
   const [lng, lat] = useMemo(() => normalizeToLngLat(center), [center]);
 
@@ -71,6 +74,9 @@ export default function DarkVectorMap({
 
   const onMarkerHoverRef = useRef(onMarkerHover);
   onMarkerHoverRef.current = onMarkerHover;
+
+  const onSingleMarkerDragRef = useRef(onSingleMarkerDrag);
+  onSingleMarkerDragRef.current = onSingleMarkerDrag;
 
   // Initialize Map
   useEffect(() => {
@@ -92,10 +98,7 @@ export default function DarkVectorMap({
       console.error("MAPLIBRE ERROR EVENT:", e);
     });
 
-    map.on("load", () => {
-      console.log("MAPLIBRE LOAD EVENT FIRED");
-    });
-
+    map.on("load", () => setMapReady(true));
 
     map.on("click", (e) => {
       onMapClickRef.current?.({ lat: e.lngLat.lat, lng: e.lngLat.lng });
@@ -132,16 +135,22 @@ export default function DarkVectorMap({
   // Single marker (for Submit / Create form)
   useEffect(() => {
     const map = mapRef.current;
-    if (!map) return;
+    if (!map || !mapReady) return;
 
     if (singleMarker) {
       const pinHtml = createBhandaraIcon("selected").options.html as string;
       if (!singleMarkerRef.current) {
         const el = document.createElement("div");
+        el.title = "Selected meal location. Drag to adjust.";
+        el.className = "cursor-grab";
         el.innerHTML = pinHtml;
-        singleMarkerRef.current = new maplibregl.Marker({ element: el })
+        singleMarkerRef.current = new maplibregl.Marker({ element: el, draggable: true, anchor: "center" })
           .setLngLat([singleMarker.lng, singleMarker.lat])
           .addTo(map);
+        singleMarkerRef.current.on("dragend", () => {
+          const point = singleMarkerRef.current?.getLngLat();
+          if (point) onSingleMarkerDragRef.current?.({ lat: point.lat, lng: point.lng });
+        });
       } else {
         singleMarkerRef.current.setLngLat([singleMarker.lng, singleMarker.lat]);
       }
@@ -149,34 +158,37 @@ export default function DarkVectorMap({
       singleMarkerRef.current.remove();
       singleMarkerRef.current = null;
     }
-  }, [singleMarker]);
+  }, [singleMarker, mapReady]);
 
   // User location marker
   useEffect(() => {
     const map = mapRef.current;
-    if (!map) return;
+    if (!map || !mapReady) return;
 
     if (userLocation) {
       const iconHtml = createUserLocationIcon().options.html as string;
       if (!userMarkerRef.current) {
         const el = document.createElement("div");
+        el.title = "Your location";
+        el.setAttribute("aria-label", "Your location");
         el.innerHTML = iconHtml;
-        userMarkerRef.current = new maplibregl.Marker({ element: el })
+        userMarkerRef.current = new maplibregl.Marker({ element: el, anchor: "center" })
           .setLngLat([userLocation[1], userLocation[0]])
           .addTo(map);
       } else {
         userMarkerRef.current.setLngLat([userLocation[1], userLocation[0]]);
       }
+      userMarkerRef.current.getElement().style.setProperty("z-index", "1000", "important");
     } else if (userMarkerRef.current) {
       userMarkerRef.current.remove();
       userMarkerRef.current = null;
     }
-  }, [userLocation]);
+  }, [userLocation, mapReady]);
 
   // Bhandara markers & popups
   useEffect(() => {
     const map = mapRef.current;
-    if (!map) return;
+    if (!map || !mapReady) return;
 
     // Clear old markers
     markersRef.current.forEach((m) => m.remove());
@@ -232,23 +244,24 @@ export default function DarkVectorMap({
 
       // Render Popup for hovered marker
       if (hoveredId === bhandara.id && selectedId !== bhandara.id) {
-        const popup = new maplibregl.Popup({
-          closeButton: false,
-          closeOnClick: false,
-          anchor: "bottom",
-          offset: 24,
-          className: "z-50",
-        })
-          .setLngLat([bhandara.longitude, bhandara.latitude])
-          .setHTML(renderPopupHtml(bhandara, userLocation))
-          .addTo(map);
+        const isMobile = window.innerWidth < 768;
+        if (!isMobile) {
+          const popup = new maplibregl.Popup({
+            closeButton: false,
+            closeOnClick: false,
+            anchor: "bottom",
+            offset: 24,
+            className: "z-50",
+          })
+            .setLngLat([bhandara.longitude, bhandara.latitude])
+            .setHTML(renderPopupHtml(bhandara, userLocation))
+            .addTo(map);
 
-        popupRef.current = popup;
+          popupRef.current = popup;
+        }
       }
     });
-  }, [bhandaras, hoveredId, selectedId, userLocation]);
+  }, [bhandaras, hoveredId, selectedId, userLocation, mapReady]);
 
   return <div ref={containerRef} className={className} />;
 }
-
-

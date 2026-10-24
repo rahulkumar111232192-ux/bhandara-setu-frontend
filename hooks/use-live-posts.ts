@@ -1,8 +1,7 @@
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useState, useCallback } from "react";
 import type { Bhandara } from "@/lib/types";
-import { apiFetch, getApiBaseUrl } from "@/lib/api";
-
-type PostEvent = { id: number } & Partial<Bhandara>;
+import { apiFetch } from "@/lib/api";
+import { useServerEvent } from "@/hooks/use-server-event";
 
 interface UseLivePostsReturn {
   posts: Bhandara[];
@@ -13,8 +12,6 @@ interface UseLivePostsReturn {
   /** Manually add a newly created post to state */
   addPost: (post: Bhandara) => void;
 }
-
-const RECONNECT_DELAY_MS = 3000;
 
 /**
  * useLivePosts
@@ -42,8 +39,6 @@ export function useLivePosts(view: string = "all"): UseLivePostsReturn {
 
   const [loading, setLoading] = useState(() => posts.length === 0);
   const [error, setError] = useState<string | null>(null);
-  const esRef = useRef<EventSource | null>(null);
-  const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ── Initial & background fetch ───────────────────────────────────────────
   useEffect(() => {
@@ -79,57 +74,64 @@ export function useLivePosts(view: string = "all"): UseLivePostsReturn {
     return () => { cancelled = true; };
   }, [view]);
 
-  // ── SSE connection ──────────────────────────────────────────────────────
-  const connect = useCallback(() => {
-    if (esRef.current) esRef.current.close();
-
-    const sseUrl = `${getApiBaseUrl()}/api/events/stream`;
-    const es = new EventSource(sseUrl);
-    esRef.current = es;
-
-    es.addEventListener("post:updated", (e) => {
-      const updated: Bhandara = JSON.parse(e.data);
-      setPosts((prev) => {
-        const idx = prev.findIndex((p) => p.id === updated.id);
-        let next: Bhandara[];
-        if (idx === -1) {
-          next = [updated, ...prev];
-        } else {
-          next = [...prev];
-          next[idx] = { ...next[idx], ...updated };
-        }
-        try {
-          localStorage.setItem(`${POSTS_CACHE_KEY}_${view}`, JSON.stringify(next));
-        } catch {}
-        return next;
-      });
+  const handlePostUpdated = useCallback((event: MessageEvent<string>) => {
+    const updated: Bhandara = JSON.parse(event.data);
+    setPosts((prev) => {
+      const idx = prev.findIndex((post) => post.id === updated.id);
+      if (idx === -1 && view === "live" && !updated.isLive) return prev;
+      const next = idx === -1
+        ? [updated, ...prev]
+        : prev.map((post, index) => index === idx ? { ...post, ...updated } : post);
+      try {
+        localStorage.setItem(`${POSTS_CACHE_KEY}_${view}`, JSON.stringify(next));
+      } catch {}
+      return next;
     });
-
-    es.addEventListener("post:expired", (e) => {
-      const { id }: { id: number } = JSON.parse(e.data);
-      setPosts((prev) => {
-        const next = view === "live" ? prev.filter((p) => p.id !== id) : prev.map((p) => p.id === id ? { ...p, isLive: false, status: "ended" } : p);
-        try {
-          localStorage.setItem(`${POSTS_CACHE_KEY}_${view}`, JSON.stringify(next));
-        } catch {}
-        return next;
-      });
-    });
-
-    es.onerror = () => {
-      es.close();
-      esRef.current = null;
-      reconnectTimer.current = setTimeout(connect, RECONNECT_DELAY_MS);
-    };
   }, [view]);
 
-  useEffect(() => {
-    connect();
-    return () => {
-      esRef.current?.close();
-      if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
-    };
-  }, [connect]);
+  const handlePostExpired = useCallback((event: MessageEvent<string>) => {
+    const { id }: { id: number } = JSON.parse(event.data);
+    setPosts((prev) => {
+      const next = view === "live"
+        ? prev.filter((post) => post.id !== id)
+        : prev.map((post) => post.id === id ? { ...post, isLive: false, status: "ended" } : post);
+      try {
+        localStorage.setItem(`${POSTS_CACHE_KEY}_${view}`, JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+  }, [view]);
+
+  const handleCommentAdded = useCallback((event: MessageEvent<string>) => {
+    const comment: { postId: number } = JSON.parse(event.data);
+    setPosts((prev) => {
+      const next = prev.map((post) => post.id === comment.postId
+        ? { ...post, commentCount: (post.commentCount ?? 0) + 1 }
+        : post);
+      try {
+        localStorage.setItem(`${POSTS_CACHE_KEY}_${view}`, JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+  }, [view]);
+
+  const handleCommentDeleted = useCallback((event: MessageEvent<string>) => {
+    const { postId }: { postId: number; commentId: number } = JSON.parse(event.data);
+    setPosts((prev) => {
+      const next = prev.map((post) => post.id === postId
+        ? { ...post, commentCount: Math.max(0, (post.commentCount ?? 0) - 1) }
+        : post);
+      try {
+        localStorage.setItem(`${POSTS_CACHE_KEY}_${view}`, JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+  }, [view]);
+
+  useServerEvent("post:updated", handlePostUpdated);
+  useServerEvent("post:expired", handlePostExpired);
+  useServerEvent("comment:new", handleCommentAdded);
+  useServerEvent("comment:deleted", handleCommentDeleted);
 
   // ── Helpers ─────────────────────────────────────────────────────────────
   const updatePost = useCallback((post: Bhandara) => {
@@ -157,4 +159,3 @@ export function useLivePosts(view: string = "all"): UseLivePostsReturn {
 
   return { posts, loading, error, updatePost, addPost };
 }
-

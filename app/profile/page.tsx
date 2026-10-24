@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { useAuth } from "@/hooks/use-auth";
+import { useServerEvent } from "@/hooks/use-server-event";
 import type { Bhandara } from "@/lib/types";
 import CommentSection from "@/components/CommentSection";
 
@@ -152,11 +153,12 @@ function PostCard({
 
 export default function ProfilePage() {
   const router = useRouter();
-  const { user, isLoading, logout } = useAuth();
+  const { user, isLoading, isSessionVerified, logout, validateSession } = useAuth();
   const [posts, setPosts] = useState<Bhandara[]>([]);
   const [loadingPosts, setLoadingPosts] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"all" | "live" | "upcoming" | "ended">("all");
+  const [interactionStats, setInteractionStats] = useState({ confirmedCount: 0, reportedCount: 0 });
 
   const fetchMyPosts = useCallback(async () => {
     try {
@@ -171,6 +173,7 @@ export default function ProfilePage() {
       const data = await res.json();
       if (data.status === 200 && Array.isArray(data.data)) {
         setPosts(data.data);
+        if (data.interactionStats) setInteractionStats(data.interactionStats);
       } else {
         setError(data.message || "Failed to load your posts.");
       }
@@ -181,15 +184,51 @@ export default function ProfilePage() {
     }
   }, [router]);
 
+  const handlePostUpdated = useCallback((event: MessageEvent<string>) => {
+    const updated: Bhandara = JSON.parse(event.data);
+    if (String(updated.userId) !== String(user?.id)) return;
+    setPosts((previous) => {
+      const existingIndex = previous.findIndex((post) => post.id === updated.id);
+      if (existingIndex < 0) return [updated, ...previous];
+      return previous.map((post, index) => index === existingIndex ? { ...post, ...updated } : post);
+    });
+  }, [user?.id]);
+
+  const handlePostExpired = useCallback((event: MessageEvent<string>) => {
+    const { id }: { id: number } = JSON.parse(event.data);
+    setPosts((previous) => previous.map((post) =>
+      post.id === id ? { ...post, isLive: false, isUpcoming: false, status: "ended" } : post
+    ));
+  }, []);
+
+  const handleCommentAdded = useCallback((event: MessageEvent<string>) => {
+    const { postId }: { postId: number } = JSON.parse(event.data);
+    setPosts((previous) => previous.map((post) =>
+      post.id === postId ? { ...post, commentCount: (post.commentCount ?? 0) + 1 } : post
+    ));
+  }, []);
+
+  const handleCommentDeleted = useCallback((event: MessageEvent<string>) => {
+    const { postId }: { postId: number } = JSON.parse(event.data);
+    setPosts((previous) => previous.map((post) =>
+      post.id === postId ? { ...post, commentCount: Math.max(0, (post.commentCount ?? 0) - 1) } : post
+    ));
+  }, []);
+
+  useServerEvent("post:updated", handlePostUpdated);
+  useServerEvent("post:expired", handlePostExpired);
+  useServerEvent("comment:new", handleCommentAdded);
+  useServerEvent("comment:deleted", handleCommentDeleted);
+
   useEffect(() => {
     if (!isLoading) {
-      if (user && !user.isAnonymous) {
+      if (user && !user.isAnonymous && isSessionVerified) {
         fetchMyPosts();
-      } else {
+      } else if (!user || user.isAnonymous) {
         router.push("/login");
       }
     }
-  }, [user, isLoading, fetchMyPosts, router]);
+  }, [user, isLoading, isSessionVerified, fetchMyPosts, router]);
 
   const handleLogout = async () => {
     await logout();
@@ -224,6 +263,23 @@ export default function ProfilePage() {
       <div className="min-h-dvh flex items-center justify-center px-4 py-8 bg-background">
         <div className="rounded-2xl p-6 text-center text-sm text-muted-foreground">
           Loading profile...
+        </div>
+      </div>
+    );
+  }
+
+  if (user && !user.isAnonymous && !isSessionVerified) {
+    return (
+      <div className="min-h-dvh flex items-center justify-center px-4 py-8 bg-background">
+        <div className="rounded-2xl border border-border/60 bg-card p-6 text-center shadow-sm">
+          <p className="text-sm font-medium">Your sign-in could not be verified.</p>
+          <p className="mt-1 text-xs text-muted-foreground">Connect to the server and verify your session before opening the dashboard.</p>
+          <button
+            onClick={() => void validateSession()}
+            className="mt-4 rounded-xl bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
+          >
+            Verify session
+          </button>
         </div>
       </div>
     );
@@ -276,7 +332,7 @@ export default function ProfilePage() {
         <div className="rounded-2xl border border-border/60 bg-card p-5 shadow-sm space-y-4">
           <h2 className="font-semibold text-sm flex items-center gap-2">
             <Award className="w-4 h-4 text-primary" />
-            Accuracy & Trust Score
+            Accuracy & Trust Score (Your Listings)
           </h2>
 
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -295,6 +351,30 @@ export default function ProfilePage() {
             <div className="p-3 rounded-xl bg-muted/40 border border-border/40 text-center">
               <p className="text-2xl font-bold text-foreground">{posts.length}</p>
               <p className="text-xs text-muted-foreground mt-0.5">Total Listings</p>
+            </div>
+          </div>
+        </div>
+
+        {/* ── My Verification Activity ── */}
+        <div className="rounded-2xl border border-border/60 bg-card p-5 shadow-sm space-y-4">
+          <h2 className="font-semibold text-sm flex items-center gap-2">
+            <CheckCircle className="w-4 h-4 text-primary" />
+            My Verification Activity (Community Contributions)
+          </h2>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="p-3 rounded-xl bg-muted/40 border border-border/40 flex items-center justify-between">
+              <div>
+                <p className="text-xs text-muted-foreground">Listings Confirmed</p>
+                <p className="text-lg font-bold text-green-600">{interactionStats.confirmedCount}</p>
+              </div>
+              <ThumbsUp className="w-6 h-6 text-green-600/30" />
+            </div>
+            <div className="p-3 rounded-xl bg-muted/40 border border-border/40 flex items-center justify-between">
+              <div>
+                <p className="text-xs text-muted-foreground">Listings Reported</p>
+                <p className="text-lg font-bold text-red-500">{interactionStats.reportedCount}</p>
+              </div>
+              <ThumbsDown className="w-6 h-6 text-red-500/30" />
             </div>
           </div>
         </div>
@@ -360,5 +440,3 @@ export default function ProfilePage() {
     </div>
   );
 }
-
-

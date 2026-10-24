@@ -2,7 +2,7 @@
 
 import React, { useState, useRef } from "react";
 import Link from "next/link";
-import { Bhandara, FilterState, PostCategory, CATEGORY_MAP } from "@/lib/types";
+import { Bhandara, FilterState, PostCategory, CATEGORY_MAP, SortOption } from "@/lib/types";
 import FeedCard from "./FeedCard";
 import {
   ChevronRight,
@@ -32,6 +32,8 @@ interface FeedPanelProps {
   onSearchChange: (val: string) => void;
   mobileSnap?: "min" | "half" | "max";
   onMobileSnapChange?: (snap: "min" | "half" | "max") => void;
+  sortBy?: SortOption;
+  onSortChange?: (val: SortOption) => void;
 }
 
 const CATEGORIES: PostCategory[] = ["temple", "community", "ngo", "corporate", "personal", "other"];
@@ -49,11 +51,14 @@ export default function FeedPanel({
   onSearchChange,
   mobileSnap: controlledMobileSnap,
   onMobileSnapChange,
+  sortBy = "newest",
+  onSortChange,
 }: FeedPanelProps) {
   const [isDesktopCollapsed, setIsDesktopCollapsed] = useState(false);
   const [localMobileSnap, setLocalMobileSnap] = useState<"min" | "half" | "max">("half");
   const [showCategoryFilter, setShowCategoryFilter] = useState(false);
   const touchStartY = useRef<number | null>(null);
+  const touchMovedRef = useRef(false);
 
   const mobileSnap = controlledMobileSnap ?? localMobileSnap;
   const setMobileSnap = (snap: "min" | "half" | "max") => {
@@ -64,13 +69,22 @@ export default function FeedPanel({
   };
 
   const cycleMobileSnap = () => {
+    if (touchMovedRef.current) {
+      touchMovedRef.current = false;
+      return;
+    }
     if (mobileSnap === "min") setMobileSnap("half");
     else if (mobileSnap === "half") setMobileSnap("max");
     else setMobileSnap("min");
   };
 
   const handleTouchStart = (e: React.TouchEvent) => {
+    if ((e.target as HTMLElement).closest("button")) {
+      touchStartY.current = null;
+      return;
+    }
     touchStartY.current = e.touches[0].clientY;
+    touchMovedRef.current = false;
   };
 
   const handleTouchEnd = (e: React.TouchEvent) => {
@@ -78,10 +92,12 @@ export default function FeedPanel({
     const diff = e.changedTouches[0].clientY - touchStartY.current;
     touchStartY.current = null;
     if (diff < -35) {
+      touchMovedRef.current = true;
       // Swiped UP -> expand
       if (mobileSnap === "min") setMobileSnap("half");
       else if (mobileSnap === "half") setMobileSnap("max");
     } else if (diff > 35) {
+      touchMovedRef.current = true;
       // Swiped DOWN -> collapse
       if (mobileSnap === "max") setMobileSnap("half");
       else if (mobileSnap === "half") setMobileSnap("min");
@@ -135,11 +151,11 @@ export default function FeedPanel({
 
   return (
     <>
-      {/* ── DESKTOP RIGHT PANEL ── */}
+      {/* ── DESKTOP LEFT PANEL ── */}
       <div
         className={cn(
-          "hidden md:flex flex-col fixed right-4 top-4 bottom-4 z-[900] glass rounded-3xl transition-all duration-300 shadow-2xl border border-border/60 backdrop-blur-xl",
-          isDesktopCollapsed ? "w-[64px]" : "w-[410px]"
+          "hidden md:flex flex-col fixed left-4 top-24 bottom-4 z-[900] glass rounded-3xl transition-all duration-300 shadow-2xl border border-border/60 backdrop-blur-xl",
+          isDesktopCollapsed ? "w-[60px]" : "w-[390px]"
         )}
       >
         {/* Panel Header */}
@@ -171,11 +187,11 @@ export default function FeedPanel({
           >
             {isDesktopCollapsed ? (
               <div className="flex flex-col items-center">
-                <ChevronLeft className="w-5 h-5 text-primary" />
+                <ChevronRight className="w-5 h-5 text-primary" />
                 <span className="text-[10px] font-bold mt-1 text-primary">{activeCount}</span>
               </div>
             ) : (
-              <ChevronRight className="w-5 h-5" />
+              <ChevronLeft className="w-5 h-5" />
             )}
           </button>
         </div>
@@ -183,8 +199,9 @@ export default function FeedPanel({
         {/* Filter Controls on Desktop */}
         {!isDesktopCollapsed && (
           <div className="p-3 border-b border-border/40 space-y-2.5 shrink-0 bg-muted/10">
-            {/* Status Tabs */}
-            <div className="flex items-center p-1 rounded-xl bg-muted/60 border border-border/40 gap-1 text-xs font-semibold">
+            {/* Status Tabs & Sorting */}
+            <div className="flex items-center gap-2">
+              <div className="flex-1 flex items-center p-1 rounded-xl bg-muted/60 border border-border/40 gap-1 text-xs font-semibold">
               <button
                 onClick={() => handleStatusSelect("all")}
                 className={cn(
@@ -232,6 +249,18 @@ export default function FeedPanel({
                 Ended
               </button>
             </div>
+            {/* Sorting Dropdown */}
+            <div className="shrink-0">
+              <select
+                value={sortBy}
+                onChange={(e) => onSortChange?.(e.target.value as SortOption)}
+                className="bg-card border border-border/60 text-xs font-semibold rounded-xl px-2 py-1.5 focus:outline-none shadow-sm cursor-pointer"
+              >
+                <option value="newest">Newest</option>
+                <option value="nearest">Nearest</option>
+              </select>
+            </div>
+          </div>
 
             {/* Category Chips Bar */}
             <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 scrollbar-none">
@@ -271,7 +300,7 @@ export default function FeedPanel({
 
         {/* Scrollable Feed List (Desktop) */}
         {!isDesktopCollapsed && (
-          <div className="flex-1 overflow-y-auto scrollbar-thin p-3 space-y-2.5">
+          <div className="flex-1 overflow-y-auto scrollbar-thin p-3 space-y-2.5 pb-24">
             {bhandaras.length === 0 ? (
               <div className="h-full flex flex-col items-center justify-center text-center text-muted-foreground space-y-3 px-4 py-8">
                 <div className="p-3 rounded-full bg-muted/50">
@@ -316,6 +345,7 @@ export default function FeedPanel({
             )}
           </div>
         )}
+
       </div>
 
       {/* ── MOBILE SHUTTER (3-SNAP: Min ~60px, Half 48vh, Max ~72vh below top floating bar) ── */}

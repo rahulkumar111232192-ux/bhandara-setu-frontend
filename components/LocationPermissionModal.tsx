@@ -126,23 +126,14 @@ export default function LocationPermissionModal({
       >
         {/* Header */}
         <div className="p-4 sm:p-5 pb-3 border-b border-border/60 bg-muted/20 flex items-start justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <div className="w-11 h-11 rounded-2xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-amber-600 dark:text-amber-400 shrink-0">
-              <Compass className={cn("w-6 h-6", locating && "animate-spin")} />
+          <div className="flex-1 flex flex-col items-center text-center">
+            <div className="w-12 h-12 rounded-full bg-primary/10 text-primary flex items-center justify-center mb-4">
+              <MapPin className="w-6 h-6 animate-bounce" />
             </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h3 className="font-bold text-base text-foreground">
-                  Location Required
-                </h3>
-                <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-red-500/15 text-red-600 dark:text-red-400 border border-red-500/30">
-                  Mandatory
-                </span>
-              </div>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                Bhandara Setu needs your location to display real-time food drives near you.
-              </p>
-            </div>
+            <h3 className="text-xl font-bold mb-2 font-headline">Location Settings</h3>
+            <p className="text-sm text-muted-foreground mb-6 max-w-sm">
+              Bhandara Setu uses your location to show free meals nearby and let you verify active events. You can use your GPS or pick a spot on the map.
+            </p>
           </div>
 
           {hasCurrentLocation && (

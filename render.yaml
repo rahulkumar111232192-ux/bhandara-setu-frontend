@@ -7,3 +7,5 @@ services:
     envVars:
       - key: NEXT_PUBLIC_API_URL
         value: https://code-53i5.onrender.com
+      - key: NEXT_PUBLIC_VAPID_PUBLIC_KEY
+        sync: false

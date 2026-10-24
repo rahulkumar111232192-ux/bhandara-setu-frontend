@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 import Link from "next/link";
 import { Bhandara, CATEGORY_MAP } from "@/lib/types";
 import { X, Share2, MapPin, Calendar, Clock, UtensilsCrossed, Eye, Star, ThumbsUp, ThumbsDown, User, BadgeCheck, Navigation, Edit, ArrowLeft, Bell, Lock } from "lucide-react";
@@ -82,6 +82,34 @@ export default function PostDetail({ bhandara, open, onClose, onPostUpdated, use
   const [userVote, setUserVote] = useState<"upvote" | "downvote" | null>(null);
   const [isExpanded, setIsExpanded] = useState(false);
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
+  const touchStartY = useRef<number | null>(null);
+  const touchMovedRef = useRef(false);
+
+  const handleSheetTouchStart = (event: React.TouchEvent<HTMLDivElement>) => {
+    if ((event.target as HTMLElement).closest("button")) {
+      touchStartY.current = null;
+      return;
+    }
+    touchStartY.current = event.touches[0].clientY;
+    touchMovedRef.current = false;
+  };
+
+  const handleSheetTouchEnd = (event: React.TouchEvent<HTMLDivElement>) => {
+    if (touchStartY.current === null) return;
+    const diff = event.changedTouches[0].clientY - touchStartY.current;
+    touchStartY.current = null;
+    if (Math.abs(diff) < 35) return;
+    touchMovedRef.current = true;
+    setIsExpanded(diff < 0);
+  };
+
+  const toggleSheet = () => {
+    if (touchMovedRef.current) {
+      touchMovedRef.current = false;
+      return;
+    }
+    setIsExpanded((expanded) => !expanded);
+  };
 
   // Proximity Calculation (500m proximity threshold for voting/verifying)
   const userDistanceMeters = React.useMemo(() => {
@@ -171,66 +199,55 @@ export default function PostDetail({ bhandara, open, onClose, onPostUpdated, use
   };
 
   const handleVote = async (vote: "upvote" | "downvote") => {
-    if (typeof navigator === "undefined" || !navigator.geolocation) {
+    if (!userLocation) {
       toast({
         title: "📍 Location Required",
-        description: "Geolocation is required to verify community votes.",
+        description: "Please share your location to verify community votes.",
       });
+      if (onLocateMe) onLocateMe();
       return;
     }
 
     setReactionLoading(true);
 
-    navigator.geolocation.getCurrentPosition(
-      async (pos) => {
-        try {
-          await ensureAnonymousIdentity();
-          const res = await apiFetch(`/api/posts/${bhandara.id}/votes`, {
-            method: "POST",
-            body: JSON.stringify({
-              vote,
-              latitude: pos.coords.latitude,
-              longitude: pos.coords.longitude,
-            }),
-          });
+    try {
+      await ensureAnonymousIdentity();
+      const res = await apiFetch(`/api/posts/${bhandara.id}/votes`, {
+        method: "POST",
+        body: JSON.stringify({
+          vote,
+          latitude: userLocation[0],
+          longitude: userLocation[1],
+        }),
+      });
 
-          const data = await res.json();
+      const data = await res.json();
 
-          if (!res.ok) {
-            toast({
-              title: "📍 Proximity Verification",
-              description: data.message || "You must be near the bhandara location to verify it.",
-            });
-            return;
-          }
-
-          setUserVote(vote);
-          if (data.data && onPostUpdated) {
-            onPostUpdated(data.data);
-          }
-
-          toast({
-            title: vote === "upvote" ? "✅ Confirmed Active!" : "⏱ Report Recorded",
-            description: "Thank you for verifying! Your input helps the community.",
-          });
-        } catch (error: any) {
-          toast({
-            title: "Vote could not be sent",
-            description: error?.message || "Could not submit vote right now.",
-          });
-        } finally {
-          setReactionLoading(false);
-        }
-      },
-      (err) => {
-        setReactionLoading(false);
+      if (!res.ok) {
         toast({
-          title: "📍 Location Access Restricted",
-          description: "Please allow location access in your browser to verify proximity and cast a vote.",
+          title: "📍 Proximity Verification",
+          description: data.message || "You must be near the bhandara location to verify it.",
         });
-      },
-      { maximumAge: 30000, timeout: 6000, enableHighAccuracy: true }
-    );
+        return;
+      }
+
+      setUserVote(vote);
+      if (data.data && onPostUpdated) {
+        onPostUpdated(data.data);
+      }
+
+      toast({
+        title: vote === "upvote" ? "✅ Confirmed Active!" : "⏱ Report Recorded",
+        description: "Thank you for verifying! Your input helps the community.",
+      });
+    } catch (error: any) {
+      toast({
+        title: "Vote could not be sent",
+        description: error?.message || "Could not submit vote right now.",
+      });
+    } finally {
+      setReactionLoading(false);
+    }
   };
 
   const menuItems = bhandara.menu ? bhandara.menu.split(",").map(i => i.trim()) : [];
@@ -451,40 +468,7 @@ export default function PostDetail({ bhandara, open, onClose, onPostUpdated, use
             </div>
 
             {/* Community Signal & Proximity-Gated Verification */}
-            {!userLocation ? (
-              <div className="rounded-2xl border p-4 bg-muted/20 border-border/80 space-y-2.5">
-                <div className="flex items-center gap-2 text-xs font-semibold text-foreground">
-                  <MapPin className="w-4 h-4 text-amber-500 shrink-0" />
-                  <span>Location Needed to Verify</span>
-                </div>
-                <p className="text-xs text-muted-foreground leading-relaxed">
-                  Only devotees physically within 500m can verify food availability or report this listing to prevent fake votes.
-                </p>
-                {onLocateMe && (
-                  <button
-                    onClick={onLocateMe}
-                    className="w-full py-2 px-3 rounded-xl bg-primary/15 hover:bg-primary/25 text-primary text-xs font-semibold transition-colors flex items-center justify-center gap-1.5"
-                  >
-                    <Navigation className="w-3.5 h-3.5" /> Check My Proximity
-                  </button>
-                )}
-              </div>
-            ) : !isNearbyForVerification ? (
-              <div className="rounded-2xl border p-4 bg-muted/20 border-border/80 space-y-2">
-                <div className="flex items-center justify-between text-xs font-semibold text-foreground">
-                  <div className="flex items-center gap-2">
-                    <Lock className="w-4 h-4 text-muted-foreground shrink-0" />
-                    <span>Proximity Verification Locked</span>
-                  </div>
-                  <span className="text-[11px] font-mono text-muted-foreground px-2 py-0.5 rounded-full bg-muted border border-border/60">
-                    📍 {formattedDistance} away
-                  </span>
-                </div>
-                <p className="text-xs text-muted-foreground leading-relaxed">
-                  You are currently {formattedDistance} away. Only devotees within 500m can confirm active food distribution or report this listing.
-                </p>
-              </div>
-            ) : (
+            {userLocation && isNearbyForVerification && (
               <div className="rounded-2xl border p-4 bg-green-500/10 border-green-500/30 space-y-3">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-1.5 text-xs font-bold text-green-700 dark:text-green-300">
@@ -559,14 +543,16 @@ export default function PostDetail({ bhandara, open, onClose, onPostUpdated, use
       <div className="md:hidden fixed inset-x-0 bottom-0 z-[1100] pointer-events-none">
         <div
           className={cn(
-            "relative w-full glass-strong rounded-t-3xl border-t border-border shadow-2xl bg-background/95 transition-all duration-300 pointer-events-auto flex flex-col overflow-hidden",
-            isExpanded ? "h-[85vh]" : "h-[45vh]"
+            "relative w-full glass-strong rounded-t-3xl border-t border-border shadow-2xl bg-background/95 transition-[height] duration-300 ease-out pointer-events-auto flex flex-col overflow-hidden",
+            isExpanded ? "h-[85dvh]" : "h-[45dvh]"
           )}
         >
           {/* Draggable Shutter Handle Header */}
           <div 
-            onClick={() => setIsExpanded((v) => !v)}
-            className="w-full pt-3 pb-2 flex flex-col items-center cursor-pointer select-none bg-muted/20 border-b border-border/40"
+            onClick={toggleSheet}
+            onTouchStart={handleSheetTouchStart}
+            onTouchEnd={handleSheetTouchEnd}
+            className="w-full pt-3 pb-2 flex flex-col items-center cursor-grab active:cursor-grabbing select-none touch-none bg-muted/20 border-b border-border/40"
           >
             <div className="w-12 h-1.5 rounded-full bg-muted-foreground/30 mb-2" />
             <div className="w-full px-4 flex items-center justify-between gap-2">
@@ -828,4 +814,3 @@ export default function PostDetail({ bhandara, open, onClose, onPostUpdated, use
     </>
   );
 }
-

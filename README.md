@@ -75,6 +75,9 @@ Configure the backend API URL:
 # Backend API URL (Express server)
 NEXT_PUBLIC_API_URL=http://localhost:5000
 
+# Public VAPID key from the server (required for background Web Push)
+NEXT_PUBLIC_VAPID_PUBLIC_KEY=your_vapid_public_key
+
 # Optional custom basemap key (CARTO)
 NEXT_PUBLIC_CARTO_KEY=your_carto_key
 ```
@@ -82,14 +85,17 @@ NEXT_PUBLIC_CARTO_KEY=your_carto_key
 For a production deployment, use:
 ```env
 NEXT_PUBLIC_API_URL=https://code-53i5.onrender.com
+NEXT_PUBLIC_VAPID_PUBLIC_KEY=your_vapid_public_key
 ```
+
+Set `NEXT_PUBLIC_VAPID_PUBLIC_KEY` in the frontend's build environment and set the matching `VAPID_PUBLIC_KEY` and `VAPID_PRIVATE_KEY` on the backend. For GitHub Pages deployments, add the public key as a repository Actions variable named `NEXT_PUBLIC_VAPID_PUBLIC_KEY`.
 
 ### 4. Run Development Server
 ```bash
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) in your browser.
+Open [https://localhost:3000](https://localhost:3000) in your browser. Next.js creates a local development certificate for HTTPS; certificate files are ignored by Git and should not be committed.
 
 ### 5. Production Build
 ```bash

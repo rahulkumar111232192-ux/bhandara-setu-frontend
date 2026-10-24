@@ -15,8 +15,8 @@ self.addEventListener('push', (event) => {
     const title = data.title || 'Nearby Food Alert 🍲';
     const options = {
       body: data.body || 'A community free meal program is starting near you.',
-      icon: '/favicon.ico',
-      badge: '/favicon.ico',
+      icon: new URL('favicon.ico', self.registration.scope).href,
+      badge: new URL('favicon.ico', self.registration.scope).href,
       data: {
         url: data.url || '/',
       },
@@ -31,7 +31,8 @@ self.addEventListener('push', (event) => {
 // Handle clicking notifications: open or focus the app window
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
-  const targetUrl = (event.notification.data && event.notification.data.url) ? event.notification.data.url : '/';
+  const path = (event.notification.data && event.notification.data.url) ? event.notification.data.url : '/';
+  const targetUrl = new URL(path.replace(/^\/+/, ''), self.registration.scope).href;
 
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {

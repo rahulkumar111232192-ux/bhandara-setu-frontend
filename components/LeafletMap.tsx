@@ -97,6 +97,11 @@ function BhandaraMarker({
     [state, catColor, bhandara.isLive, isUpcoming]
   );
 
+  const [isMobile, setIsMobile] = useState(false);
+  useEffect(() => {
+    setIsMobile(window.innerWidth < 768);
+  }, []);
+
   return (
     <Marker
       position={[bhandara.latitude, bhandara.longitude]}
@@ -107,7 +112,7 @@ function BhandaraMarker({
         mouseout: () => onMarkerHover(null),
       }}
     >
-      {isHovered && !isSelected && (
+      {isHovered && !isSelected && !isMobile && (
         <Popup autoPan={false} closeButton={false} autoClose={false}>
           <div
             dangerouslySetInnerHTML={{
@@ -215,7 +220,7 @@ export default function LeafletMap({
         <MapEventsHandler onMapClick={onMapClick} />
 
         {userLocation && (
-          <Marker position={userLocation} icon={createUserLocationIcon()}>
+          <Marker position={userLocation} icon={createUserLocationIcon()} zIndexOffset={1000} title="Your location">
             <Popup>You are here</Popup>
           </Marker>
         )}

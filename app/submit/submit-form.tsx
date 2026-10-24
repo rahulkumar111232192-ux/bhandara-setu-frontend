@@ -320,20 +320,21 @@ export function SubmitForm() {
   };
 
   const handleUploadImages = async (files: FileList | File[]) => {
-    if (!files || files.length === 0) return;
+    const selectedFiles = Array.from(files || []);
+    if (selectedFiles.length === 0) return;
     setUploadingImage(true);
 
     try {
       const authResponse = await apiFetch("/api/uploads/auth");
-      if (!authResponse.ok) {
-        throw new Error("Unable to fetch upload authorization.");
-      }
       const authData = await authResponse.json();
+      if (!authResponse.ok) {
+        throw new Error(authData.message || "Unable to fetch upload authorization.");
+      }
 
-      const newUploaded: Array<{ url: string; fileId?: string }> = [];
+      const newUploaded: Array<{ url: string; fileId: string }> = [];
 
-      for (let i = 0; i < files.length; i++) {
-        const file = files[i];
+      for (let i = 0; i < selectedFiles.length; i++) {
+        const file = selectedFiles[i];
         const formData = new FormData();
         formData.append("file", file);
         formData.append("fileName", file.name || `bhandara-${Date.now()}-${i}`);
@@ -354,10 +355,11 @@ export function SubmitForm() {
           throw new Error(uploadResult.message || "Image upload failed.");
         }
 
-        const imageUrl = uploadResult.url || uploadResult.thumbnailUrl;
-        if (imageUrl) {
-          newUploaded.push({ url: imageUrl, fileId: uploadResult.fileId });
+        const imageUrl = uploadResult.url;
+        if (!imageUrl || !uploadResult.fileId) {
+          throw new Error("ImageKit did not return the uploaded image details.");
         }
+        newUploaded.push({ url: imageUrl, fileId: uploadResult.fileId });
       }
 
       setImagesList((prev) => [...prev, ...newUploaded]);
@@ -382,8 +384,6 @@ export function SubmitForm() {
 
   const onSubmit = async (data: FormData) => {
     const allImageUrls = imagesList.map((img) => img.url).join(",");
-    const primaryFileId = imagesList.find((img) => img.fileId)?.fileId || null;
-
     if (!user || user.isAnonymous) {
       try {
         sessionStorage.setItem(
@@ -423,10 +423,6 @@ export function SubmitForm() {
         organizerBio: data.isOrganizing ? data.organizerBio || "" : "",
         imageUrl: allImageUrls,
       };
-
-      if (primaryFileId) {
-        payload.imageFileId = primaryFileId;
-      }
 
       let res;
       if (isEditMode) {
@@ -815,4 +811,3 @@ export function SubmitForm() {
     </form>
   );
 }
-

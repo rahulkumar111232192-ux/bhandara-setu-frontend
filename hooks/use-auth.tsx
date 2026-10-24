@@ -19,6 +19,7 @@ interface User {
 interface AuthContextType {
   user: User | null;
   isLoading: boolean;
+  isSessionVerified: boolean;
   login: (email: string, password: string) => Promise<void>;
   signup: (name: string, email: string, password: string) => Promise<void>;
   logout: () => void;
@@ -31,6 +32,7 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export function AuthProvider({ children }: PropsWithChildren) {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isSessionVerified, setIsSessionVerified] = useState(false);
 
   // Validate the session with the server
   const validateSession = async (): Promise<boolean> => {
@@ -40,29 +42,24 @@ export function AuthProvider({ children }: PropsWithChildren) {
         const data = await res.json();
         if (data.status === 200 && data.user) {
           setUser(data.user);
+          setIsSessionVerified(true);
           localStorage.setItem("bhandara-user", JSON.stringify(data.user));
           return true;
         }
       }
+      setIsSessionVerified(false);
       
       // If 401 or invalid response: session key expired or invalid
       if (res.status === 401 || res.status === 403) {
-        const storedUser = localStorage.getItem("bhandara-user");
-        if (storedUser) {
-          try {
-            const parsed = JSON.parse(storedUser);
-            if (!parsed.isAnonymous) {
-              console.warn("Session key expired on server. Clearing stale user state.");
-              localStorage.removeItem("bhandara-user");
-              localStorage.removeItem("bhandara-token");
-              setUser(null);
-            }
-          } catch {}
-        }
+        console.warn("Session key expired on server. Clearing stale user state.");
+        localStorage.removeItem("bhandara-user");
+        localStorage.removeItem("bhandara-token");
+        setUser(null);
         return false;
       }
     } catch (error) {
       // Network error (offline mode) — don't log out
+      setIsSessionVerified(false);
       console.warn("Network error during session validation", error);
     }
     return false;
@@ -97,6 +94,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
   useEffect(() => {
     const handleSessionExpired = () => {
       setUser(null);
+      setIsSessionVerified(false);
     };
     window.addEventListener("bhandara:session-expired", handleSessionExpired);
     return () => window.removeEventListener("bhandara:session-expired", handleSessionExpired);
@@ -133,6 +131,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
       const anonymousUser = { id: data.token, name: "Guest", email: "guest@anonymous", isAnonymous: true };
       localStorage.setItem("bhandara-user", JSON.stringify(anonymousUser));
       localStorage.setItem("bhandara-token", data.token);
+      setIsSessionVerified(true);
       setUser(anonymousUser);
     } catch {}
   };
@@ -151,6 +150,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
 
     const loggedInUser = data.user;
     const token = data.token;
+    setIsSessionVerified(true);
     setUser(loggedInUser);
     localStorage.setItem("bhandara-user", JSON.stringify(loggedInUser));
     if (token) {
@@ -172,6 +172,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
 
     const newUser = data.user;
     const token = data.token;
+    setIsSessionVerified(true);
     setUser(newUser);
     localStorage.setItem("bhandara-user", JSON.stringify(newUser));
     if (token) {
@@ -184,12 +185,13 @@ export function AuthProvider({ children }: PropsWithChildren) {
       await apiFetch("/api/auth/logout", { method: "POST" });
     } catch {}
     setUser(null);
+    setIsSessionVerified(false);
     localStorage.removeItem("bhandara-user");
     localStorage.removeItem("bhandara-token");
   };
 
   return (
-    <AuthContext.Provider value={{ user, isLoading, login, signup, logout, ensureAnonymousIdentity, validateSession }}>
+    <AuthContext.Provider value={{ user, isLoading, isSessionVerified, login, signup, logout, ensureAnonymousIdentity, validateSession }}>
       {children}
     </AuthContext.Provider>
   );
